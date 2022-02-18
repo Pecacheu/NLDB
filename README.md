@@ -3,17 +3,21 @@
 
 ## Key Controls
 #### Everywhere:
-`Home` = Index/Search -- **TODO**\
-`Alt` or `ContextMenu` = Toggle Edit Mode -- **TODO**\
+`Home` = Index/Search\
+`Alt` or `ContextMenu` = Toggle Edit Mode\
 `CTRL` = Usage Help (General help and tips + controls) -- **TODO**
+`Escape` = Go Back
+
+#### In Menu:
+`Escape` = Close Menu
 
 #### Edit Mode:
-`Insert` = Add Element -- **TODO**\
-`Escape` = Cancel Edit Mode -- **TODO**
+`Insert` = Add Item\
+`Escape` = Cancel Edit Mode
 
 #### When Dragging or Renaming:
 `Enter` = Confirm Name Edit\
-`Escape` = Cancel Drag/Name Edit
+`Escape` = Cancel Drag/Edit
 
 ## Todo List
 - ~~Login system?~~
@@ -36,7 +40,7 @@
 - Create New CAT
 - Create New SUB
 - Rename CAT/SUB
-- Prevent duplicate CAT/SUB field names server-side, will confuse swap algorithm. Error: "Duplicate Name @ Index <i>"
+- Prevent duplicate CAT/SUB field names server-side, will confuse swap algorithm. Error: "Duplicate Name @ Index \[i\]"
 - More intuitive interface to get to CAT edit screen?
 - Server-End: In Cat update, add check to not send redundant SQL update request for unchanged rows.
 - Later: Proper user management screen with logout button?

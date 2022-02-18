@@ -36,10 +36,13 @@ window.onresize = () => {
 	if(Itm) fAlign();
 }
 window.onkeydown = e => {
-	//console.log(e.key);
+	if(e.key == 'Home') return utils.go('/');
+	if(e.key == 'Alt' || e.key == 'ContextMenu') return setEdit(!Edit);
+	if(e.key == 'Insert' && !nAdd.hidden) return nAdd.onclick();
+	if(Menu && e.key == 'Escape') return Menu.rem();
 	if(EditDone) {
 		if(e.key == 'Enter') EditDone(1); else if(e.key == 'Escape') EditDone();
-	}
+	} else if(e.key == 'Escape' && !nBack.hidden) nBack.onclick();
 }
 utils.onNav = () => {
 	//Loader:
