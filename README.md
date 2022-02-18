@@ -5,7 +5,7 @@
 #### Everywhere:
 `Home` = Index/Search\
 `Alt` or `ContextMenu` = Toggle Edit Mode\
-`CTRL` = Usage Help (General help and tips + controls) -- **TODO**
+`CTRL` = Usage Help (General help and tips + controls) -- **TODO**\
 `Escape` = Go Back
 
 #### In Menu:
@@ -37,24 +37,25 @@
 - ~~Align data fields to max len, size adjusts to 100% for vertical on mobile~~
 - ~~Redirect back to prev page after login, using 'state' var to store query string?~~
 - ~~Use Postgres transactions where needed on server-side.~~
+- ~~Server-End: In Cat update, add check to not send redundant SQL update request for unchanged rows.~~
+- ~~Database table view mode~~
+- ~~Refresh/redraw page on subcat edit so new fields (or lack thereof) will show up~~
+- Update to latest Utils.js; Make use of Array.each
 - Create New CAT
 - Create New SUB
 - Rename CAT/SUB
 - Prevent duplicate CAT/SUB field names server-side, will confuse swap algorithm. Error: "Duplicate Name @ Index \[i\]"
 - More intuitive interface to get to CAT edit screen?
-- Server-End: In Cat update, add check to not send redundant SQL update request for unchanged rows.
 - Later: Proper user management screen with logout button?
 - Should field names be stored lower case, or not? Should swap check do a case-insensitive search or not?
-- Don't allow field name "Name" because WHY WOULD YOU DO THAT
+- Don't allow field name "Name" because **WHY WOULD YOU DO THAT**
 - Implement search system
 - Later: Advanced search?
 - Later: Ability to filter for items that don't contain a value for a field (aka find missing data)
-- Database table view/edit mode (Maybe just use existing Postgres GUI software for this)
-- Add controls & help menu
+- Add help menu **(HALP ME)**
 - DB health check: Test for mismatch between itm cols & CAT/SUB rows. Also checks that there are no gaps in 'i' values.
 - Set all sub fields to null if item's subcat changed? Send null fields on update even if fields don't exist on page
-- Refresh/redraw page so new subcat fields (or lack thereof) will show up.
-- Switch to cancel button upon any data edit, even out of EDIT mode
+- Switch to cancel button upon any data edit, even out of EDIT mode?
 - Duplicate item option?
 - GZip compression for served content
 - No-cache on DB responses; Use cache for all else
