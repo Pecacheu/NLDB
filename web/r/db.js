@@ -2,10 +2,10 @@
 'use strict';
 let Usr, Itm, Cat, Edit, EditDone, Menu;
 const Types=['text','num','date','dt','email','tel','range','cb','sel','selm','fl','fi','sc'],
+Img=['.png','.jpg','.jpeg','.svg'], TBD=["Item ID","Sub-Category","Name"],
 SMsgDel=3000, SErrDel=8000;
 
 window.onload = () => {
-	search.firstChild.placeholder='Search'; //TODO: How does this look?
 	nAdd.onclick=addMenu.wrap();
 	nUsr.onclick = () => {
 		if(Usr) utils.remCookie('dbtkn'),utils.remCookie('dbusr'),utils.onNav();
@@ -74,7 +74,6 @@ async function dbReq() {
 	let a=[]; for(let i=0,l=arguments.length; i<l; i++) a[i]=encodeURIComponent(arguments[i]);
 	console.log(a),a=await getUri('db?'+a.join(';'),'DB'); return a?JSON.parse(a):0;
 }
-//async function dbCat() {Cat=await dbReq('t','itm')}
 
 function iTyp(t) {let n=Types.indexOf(t);if(n==-1)throw "No Type "+t;return n}
 async function dbSave() {
@@ -89,7 +88,7 @@ async function dbSave() {
 		Itm.cf.forEach((f,i) => e['c'+i]=f.val.trim()==Itm.cl[i+1].v?null:f.val); //Cat
 		Itm.sf.forEach((f,i) => e['s'+i]=f.val.trim()==Itm.sl[i].v?null:f.val); //Sub
 		for(let cl=cont.children,i=Itm.FO+1,l=cl.length,f; i<l; i++) //Usr
-			f=cl[i], e.u.push(f.name), e.t.push(iTyp(f.d.t)), e.v.push(f.val.toString()||null);
+			f=cl[i], e.u.push(f.name||null), e.t.push(iTyp(f.d.t)), e.v.push(f.val&&f.val.toString()||null);
 
 		await dbPost('i',e); if(e.s != Itm.e.s) setTimeout(utils.onNav,500);
 		else Itm.e=e, document.title=hdr.textContent=e.n||"Item #"+Itm.id;
@@ -97,7 +96,7 @@ async function dbSave() {
 		//i = Index | n = Name | t = Type | v = Default Value
 		let e=[],n; if(Itm.s) n=Itm.DF.f.num, e=[{t:n?n-1:null}];
 		for(let cl=cont.children,i=Itm.FO+1,l=cl.length,f; i<l; i++)
-			f=cl[i], e.push({n:f.name, t:iTyp(f.d.t), v:f.val.toString()||null});
+			f=cl[i], e.push({n:f.name||null, t:iTyp(f.d.t), v:f.val&&f.val.toString()||null});
 		await dbPost(Itm.s?'c':'s',[(Itm.sc?Itm.sc+'-':'')+tDbStr(Itm.t),e]);
 
 		if((n=tCase(Itm.NF.val)) != Itm.t) { //Rename:
@@ -115,8 +114,9 @@ async function newItem(c) {
 	catch(e) {console.error(e),cont.innerHTML=e}
 }
 
-async function newSub(c) {
-	try {await dbReq('nc',c);utils.go('?c:'+c)}
+async function newCat(c,s) {
+	if(s) c=tDbStr(Itm.t)+'-'+c;
+	try {await dbReq(s?'ns':'nc',c),utils.go((s?'?s:':'?c:')+c)}
 	catch(e) {console.error(e),cont.innerHTML=e}
 }
 
@@ -133,13 +133,11 @@ async function indexView() {
 	}
 }
 
-const TBD=["Item ID","Sub-Category","Name"];
 async function tableView(c) {
 	cont.style.overflowX='scroll', cont.style.paddingBottom=10,
 	Itm=0, search.style.display=null, cont.textContent='',
 	document.title=hdr.textContent="NovaLabs Inventory";
 	setEdit(0,1,1); nBack.hidden=0;
-
 	let d=await dbReq('l',c),tb,r,n;
 	d[1].forEach(e => {
 		if(!tb) tb=[TBD.concat(d[0])];
@@ -152,7 +150,6 @@ async function tableView(c) {
 
 async function itemView(id) {
 	Itm=await dbReq('i',id);
-
 	//Clear Page & Setup:
 	cont.style='', cont.textContent=Itm?'':"Item Not Found!", search.style.display='none',
 	document.title=hdr.textContent=Itm?(Itm.e.n||"Item #"+id):"Unknown Item";
@@ -168,7 +165,6 @@ async function catView(cn,s) {
 		let n=cn.indexOf('-'); if(n==-1) throw "Invalid Sub-Category!";
 		sc=cn.substr(0,n), t=t.substr(n+1);
 	}
-
 	//Clear Page & Setup:
 	cont.textContent=c?'':"No Such Category!", search.style.display='none',
 	cont.style='', document.title=hdr.textContent=(s?"Sub: ":"Cat: ")+t;
@@ -205,7 +201,6 @@ function idxItem(e) {
 }
 
 /*function dbSearch() {
-	//TODO: Sanitize searchbar input on cli & server end
 	//let d=(await dbReq("select * from pg_catalog.pg_tables where schemaname='itm' like "+this.value)).rows;
 	/*for(let i=0,l=Cat.length,t,r,n,m; i<l; i++) {
 		t=Cat[i], r=(await dbReq("select * from itm."+t)).rows
@@ -238,7 +233,6 @@ function itemViewDraw() {
 	utils.mkDiv(cont,null,{lineBreak:'anywhere'},JSON.stringify(Itm.e)).noGrab=1;
 	let sv=utils.mkEl('p',cont); sv.noGrab=1,aBtn(sv,"Save",dbSave,'field');
 	drawSection("Item ID #"+Itm.id,1);
-	//TODO: Change Category
 	let cs=[]; Cat.forEach((e,i) => cs[i]=(e==Itm.c?'|':'')+tCase(e));
 	drawField("category",'sel',cs,1).f.disabled=1;
 
@@ -263,7 +257,7 @@ function catViewDraw() {
 
 	drawSection("Editing "+(Itm.sc?"Sub-":'')+"Category: "+Itm.t,1);
 	if(Itm.sc) drawField("category",'text',tCase(Itm.sc),1).f.disabled=1;
-	Itm.NF=drawField("name",'text',Itm.t,1); Itm.NF.f.disabled=1; //TODO: Change Name
+	Itm.NF=drawField("name",'text',Itm.t,1); Itm.NF.f.disabled=1;
 
 	cvEdit(Itm.c.length-1); if(Itm.s) {
 		Itm.s.forEach((e,i) => Itm.s[i]=tCase(e)); let f=drawField("sub-categories",'sel',Itm.s,1);
@@ -292,12 +286,10 @@ function addMenu(e) {
 	if(Menu) Menu.rem(); let m=utils.mkDiv(null,'menu');
 	m.s1=utils.mkEl('span',m), m.s2=utils.mkEl('span',m), m.s3=utils.mkEl('span',m),
 	Menu=m, m.noGrab=1, m.rem=()=>{m.remove(),Menu=null}
-	if(e === 1) {
+	if(e===1) {
 		e=0; m.s1.remove(); utils.addText(m.s2,"Name:");
-		let n=utils.mkEl('input',m.s2,'field'); n.type='text';
-		aBtn(m.s3,"Cancel",m.rem); aBtn(m.s3,"Create Sub-Cat", () => {
-			let v=tDbStr(n.value); if(v) m.rem(),newSub(v);
-		});
+		let n=utils.mkEl('input',m.s2,'field'),v; aBtn(m.s3,"Cancel",m.rem);
+		aBtn(m.s3,"Create Sub-Cat", () => {if(v=tDbStr(n.value)) m.rem(),newCat(v,1)});
 	} else if(e) {
 		m.s1.style.display=m.s2.style.display='none'; let f=e.f, opt=f.options;
 		aBtn(m.s3,"Done",m.rem);
@@ -307,27 +299,31 @@ function addMenu(e) {
 		});
 		aBtn(m.s3,"Add Option",() => {
 			m.s2.style.display=null; m.s3.textContent='';
-			utils.addText(m.s2,"Name:"); let n=utils.mkEl('input',m.s2,'field');
+			utils.addText(m.s2,"Name:"); let n=utils.mkEl('input',m.s2,'field'),v;
 			utils.addText(m.s2,"Index:"); let i=utils.mkEl('input',m.s2,'field');
 			utils.numField(i,0,opt.length); i.set(opt.length);
 			aBtn(m.s3,"Done",() => {
-				n=n.value.trim(); if(n) {
-					let o=utils.mkEl('option',null,null,null,n); o.value=n;
-					opt.add(o,opt[i.num]); o.selected=1;
+				if(v=n.value.trim()) {
+					let o=utils.mkEl('option',null,null,null,v);
+					o.value=v, opt.add(o,opt[i.num]), o.selected=1;
 				}
 				f.oninput(); addMenu(e);
 			});
 		});
 		cont.insertChildAt(m,e.index+1); scrollTo(0,m.boundingRect.bottom);
 	} else if(!Itm) {
-		utils.addText(m.s2,"Category: "); let c=utils.mkEl('select',m.s2,'field');
+		utils.addText(m.s2,"Category: "); let c=utils.mkEl('select',m.s2,'field'),v;
 		Cat.forEach(e => utils.mkEl('option',c,null,null,tCase(e)).value=e);
-		//utils.mkEl('option',c,null,null,"New").value='';
+		utils.mkEl('option',c,null,null,"New").value='';
 		m.s1.remove(); aBtn(m.s3,"Cancel",m.rem);
-		aBtn(m.s3,"View",() => {if(c.value) m.rem(),utils.go('?t:'+c.value)});
-		aBtn(m.s3,"Edit",() => {if(c.value) m.rem(),utils.go('?c:'+c.value)});
+		aBtn(m.s3,"View",() => {if(v=c.value) m.rem(),utils.go('?t:'+v)});
+		aBtn(m.s3,"Edit",() => {
+			if(v=c.value) return m.rem(),utils.go('?c:'+v);
+			m.s2.textContent=m.s3.textContent=''; utils.addText(m.s2,"Name:");
+			c=utils.mkEl('input',m.s2,'field'); aBtn(m.s3,"Cancel",m.rem);
+			aBtn(m.s3,"Create Cat", () => {if(v=tDbStr(c.value)) m.rem(),newCat(v)});
+		});
 		aBtn(m.s3,"New Item",() => {if(c.value) m.rem(),newItem(c.value)});
-		//aBtn(m.s3,"Manage",m.rem);
 	} else if(!Edit) {
 		m.s1.remove(); genCode(m.s2); aBtn(m.s3,"Done",m.rem); aBtn(m.s3,"Print",prCode);
 		aBtn(m.s3,"Download",() => {utils.dlData(Itm.id+'.png',m.qr.toDataURL())});
@@ -375,23 +371,27 @@ function aClick() {
 	break; case "Slider": aSet('range',t);
 	break; case "Checkbox": aSet('cb',t);
 	break; case "Image/File Link":
-		m.s1.remove(); m.s2.textContent=m.s3.textContent='';
-		utils.addText(m.s2,"Link:"); let lk=utils.mkEl('input',m.s2,'field link'),
-		lc=utils.mkEl('input',m.s2,'field',{margin:'4 6 4 0'}),
-		fc=utils.mkDiv(m.s2,null,{width:0,height:0,overflow:'hidden'}),
-		fr=utils.mkEl('iframe',fc); lc.type='checkbox';
-		lk.onblur = () => { if(lk.value != fr.src) {
-			if(!fr.src) fc.style.width='100%', fc.style.height=200;
-			if(!fr.parentElement) fc.textContent='', fc.appendChild(fr);
-			fr.src=lk.value, fc.ds=null;
-		}}
+		m.s1.textContent=m.s2.textContent=m.s3.textContent='';
+		utils.addText(m.s1,"Link:"); let lk=utils.mkEl('input',m.s1,'field link'),
+		fc=utils.mkDiv(m.s2,null,{width:0,height:0,overflow:'hidden'}), fr=utils.mkEl('iframe');
+		lk.onblur = () => {
+			if(!lk.value) return; if(!fr.parentNode) fc.textContent='', fc.appendChild(fr);
+			fc.style.width='100%', fc.style.height=200, fr.src=lk.value, fc.d=0;
+		}
 		aBtn(m.s3,"Cancel",m.rem);
-		aBtn(m.s3,"Add File",() => {if(fc.ds||lk.value) aSet(lc.checked?'fi':'fl',fc.ds||lk.value)});
+		aBtn(m.s3,"Add File",() => {
+			throw "Not Yet Implemented!";
+			/*let v=fc.ds||lk.value; if(lk.value)
+				fc.i=Img.indexOf(v.substr(v.lastIndexOf('.')))!=-1;
+			if(v) aSet(fc.i?'fi':'fl',null,v);*/
+		});
 		aBtn(m.s3,"File Uploader",() => {
 			uploadFile((d,f) => {
-				fc.style.width='100%', fc.style.height=200; fr.remove();
+				if(!d) return; fc.d=d, fc.i=f.type.startsWith('image'),
 				fc.ds="data:"+f.type+";base64,"+btoa(d);
-				if(d) fc.innerHTML="<img style='height:100%;width:auto' src='"+fc.ds+"'>";
+				fc.style.width='100%', fc.style.height=200, lk.value='', fr.remove();
+				fc.innerHTML=fc.i?
+					"<img style='height:100%;width:auto' src='"+fc.ds+"'>":"No Preview Available";
 			});
 		});
 	break; case "Section": aSet('sc',t);
@@ -418,7 +418,7 @@ function alItm(f) {
 function drawItem(f,n,l) {
 	if(typeof f.t=='number') f.t=Types[f.t];
 	let p; if(f.t=='sc') p=drawSection(f.n,l);
-	else if(f.t=='fl' || f.t=='fi') p=drawLink(f.n,f.v,f.t=='fi',l);
+	else if(f.t=='fl' || f.t=='fi') p=drawLink(f.v,f.n,f.t=='fi',l);
 	else if(f.t) p=drawField(f.n,f.t,f.v,l);
 	else throw "No such type @ "+n+" index "+f.i;
 	if(p.f&&f.p) p.f.placeholder=f.p;
@@ -488,7 +488,7 @@ function drawLink(url, txt, img, lock) {
 		i.title=txt||'', i.src=url, i.onclick=()=>{if(!Edit) location=url};
 	} else utils.mkEl('a',p,null,null,txt||url).href=url;
 	if(lock) p.noGrab=1; else addSubBtn('drag',p),addSubBtn('sub',p);
-	p.name=url, p.val=txt, p.lock=lock; return p;
+	p.name=txt, p.val=url, p.lock=lock; return p;
 }
 
 //============================================== Item Edit ==============================================
@@ -515,25 +515,24 @@ function setAS(e,d) {
 function editName(e) {
 	if(!Edit) return;
 	let s=getComputedStyle(this), f=utils.mkEl('input',null,'rn',{color:s.color,font:s.font}),
-	p=this.parentNode,v=this.textContent.trim(),vc; if(v.endsWith(':')) v=v.substr(0,v.length-1),vc=1;
+	p=this.parentNode, tn=this.tagName, n=p.name;
 	f.oninput = () => f.style.width=utils.textWidth(f.value+' ',f.style.font);
 	EditDone = f.onblur = e => {
 		if(e) {
-			let nv=f.value.trim();
-			if(this.tagName=='IMG') this.textContent=this.title=p.val=nv;
-			else if(this.tagName=='A') p.val=nv, this.textContent=nv?nv:this.href;
-			else if(nv) p.name=tCase(nv), this.textContent=p.name+(vc?':':'');
+			n=tCase(f.value); if(tn=='IMG') p.name=this.title=n;
+			else if(tn=='A') p.name=n,this.textContent=n?n:this.href;
+			else if(n) p.name=n,this.textContent=n+(p.tagName=='H4'?'':':');
 		}
 		EditDone=f.onblur=null; f.replaceWith(this); itmEdit();
 	}
-	f.type='text',f.value=v; e.preventDefault();
+	f.type='text',f.value=n; e.preventDefault();
 	this.replaceWith(f); f.oninput(); f.focus();
 }
 
 function tDbStr(s,c) {s=s.trim().toLowerCase();return c?s.replace(/\s+/g,'_'):s}
 function tCase(s) {
-	s=s.trim(); if(!s) return '';
-	s=s.replace(/_/g,' ').split(/(?=[^a-zA-Z](?=[a-zA-Z]))/g);
+	s=s.replace(/_/g,' ').replace(/:/g,'').trim(); if(!s) return '';
+	s=s.split(/(?=[^a-zA-Z](?=[a-zA-Z]))/g);
 	for(let i=0,l=s.length,w; i<l; i++) {
 		w=s[i]; if(i==0) s[i]=w[0].toUpperCase()+w.substr(1);
 		else if(s[i].length > 1) s[i]=w[0]+w[1].toUpperCase()+w.substr(2);
@@ -621,7 +620,7 @@ function Grabber(el,e,hb) {
 
 function uploadFile(cb) {
 	let p=utils.mkDiv(document.body,'upPop'), c=utils.mkDiv(p,'upClose',null,"Close"),
-	up=new Uploader(['.png','.jpg','.jpeg','.svg'], utils.mkDiv(p,'upBox'));
+	up=new Uploader(null,utils.mkDiv(p,'upBox'));
 	c.onclick=() => {p.style.opacity=0,setTimeout(()=>{p.remove()},1200)}
 	setTimeout(()=>{p.style.opacity=1},1); up.onFileLoad=(d,f)=>{cb(d,f),c.onclick()}
 }

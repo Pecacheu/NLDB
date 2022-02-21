@@ -1,6 +1,5 @@
 //NLDB ©2021 Pecacheu. GNU GPL v3.0
-const VERSION='v1.2.2';
-'use strict';
+const VERSION='v1.2.3';
 
 import router from './router.js'; import uuid from './uuid.js';
 import https from 'https'; import chalk from 'chalk'; import pg from 'pg';
@@ -8,7 +7,7 @@ import fs from 'fs'; import url from 'url';
 let DB, SrvIp;
 
 //Config Options:
-const Debug=0, Port=50, Path="/root", ReqTimeout=5000, UExp=8*3600,
+const Debug=0, Port=50, Path="/web", ReqTimeout=5000, UExp=8*3600,
 DbOpt = {host:'localhost',user:'postgres',database:'nldb',password:'petepass'},
 SrvOpt = {key:fs.readFileSync('../keys/privkey.pem'), cert:fs.readFileSync('../keys/fullchain.pem')};
 
@@ -21,11 +20,11 @@ export function begin(ips) {
 	console.log(chalk.yellow("NLDB "+VERSION));
 	SrvIp=(ips?ips[0]:'localhost'); if(Debug == 2) router.debug=Debug;
 	DB=new pg.Client(DbOpt); DB.connect().then(() => {
-		console.log("Connected to DB!"); startServer(); runInput();
+		console.log("Connected to DB!"); initSrv(); runInput();
 	});
 }
 
-function startServer() {
+function initSrv() {
 	https.createServer(SrvOpt, (rq,re) => {
 		if(Debug) console.log("[ROUTER]",rq.url);
 		onReq(rq,re).then(r => {if(r) router.handle(Path,re,rq)})
@@ -42,12 +41,12 @@ const SP=/'/g, TP=/-/g, TVal=/^[a-z][a-z0-9_]{0,63}$/, AS="select * from ",
 TS="select tablename from pg_catalog.pg_tables where schemaname=";
 function qs(s,n) {
 	if(typeof s=='number') return s;
-	if(!s) { if(n) return null; throw "Invalid Param "+s; }
+	if(!s) { if(n) return null; throw "Bad Param "+s; }
 	return "'"+s.toString().replace(SP,"''")+"'";
 }
 function qt(s) {
 	if(!s || typeof s!='string' || !TVal.test(s=s.replace(TP,'0')))
-		throw "Invalid Name "+s; return s;
+		throw "Bad Name "+s; return s;
 }
 function ql(a) {
 	let s='',i=0,l=a.length; if(!l) return null;
@@ -58,14 +57,13 @@ function li(k,v) {return qt(k)+'='+(Array.isArray(v)?ql(v):qs(v,1))}
 async function onReq(rq,re) {
 	let u=url.parse(rq.url), pn=u.pathname;
 	if(pn == '/db') {
-		let ua,q=u.query.split(';');
+		let ua,q=u.query.split(';'),c,t,d;
 		for(let i=1,l=q.length; i<l; i++) q[i]=decodeURIComponent(q[i]);
 		await dbLock(rq); console.log("DB Req:",q); ua=cAuth(rq);
 		switch(q[0]) {
 		case 'a': //List All
-			if(!Cat) await tCat(); //TODO: Update cat after certain amount of time/etc?
-			//TODO: Replace with for-in loop
-			let d={}; for(let i=0,l=Cat.length,c,dr; i<l; i++) {
+			if(!Cat) await tCat();
+			d={}; for(let i=0,l=Cat.length,c,dr; i<l; i++) {
 				dr=(await dbReq(`select t from tcat.${c=Cat[i]} where i=-1`))[0].t;
 				if(dr != null) dr='c'+dr;
 				d[c]=await dbReq(`select id,s,n${(dr?','+dr:'')} from itm.${c} order by n`);
@@ -73,17 +71,17 @@ async function onReq(rq,re) {
 			}
 			res(re,d);
 		break; case 'l': //List Cat
-			let c2=qt(q[1]), t=await Promise.all([
-				dbReq(`select n from tcat.${c2} where i>=0 order by i`),
-				dbReq(AS+`itm.${c2} order by n`)]);
+			c=qt(q[1]), t=await Promise.all([
+				dbReq(`select n from tcat.${c} where i>=0 order by i`),
+				dbReq(AS+`itm.${c} order by n`)]);
 			t[0].forEach((e,i) => {t[0][i]=e.n});
 			t[1].forEach(e => {delete e.u,delete e.t,delete e.v});
 			res(re,t);
 		break; case 'i': //Get Item
 			if(!Cat) await tCat();
-			let id=qs(q[1]); if(id.length != 13) throw "Invalid ID";
+			t=qs(q[1]); if(t.length != 13) throw "Bad ID";
 			for(let i=0,l=Cat.length,c,e; i<l; i++) {
-				c=Cat[i], e=await dbReq(AS+`itm.${c} where id=${id}`);
+				c=Cat[i], e=await dbReq(AS+`itm.${c} where id=${t}`);
 				if(!e.length) continue; e=e[0];
 				let p=[dbReq(AS+`tcat.${c} order by i`), gSub(c)];
 				if(e.s) p[2]=dbReq(AS+`tsub.${c}0${e.s} order by i`);
@@ -92,20 +90,31 @@ async function onReq(rq,re) {
 			}
 			res(re,0);
 		break; case 'c': //Category
-			RA(ua); let c=qt(q[1]);
+			RA(ua), c=qt(q[1]);
 			try {res(re,await Promise.all([dbReq(AS+`tcat.${c} order by i`), gSub(c)]))}
 			catch(e) {if(e.toString().endsWith('exist')) res(re,0); else throw e}
 		break; case 's': //Subcat
 			RA(ua); try {res(re,[await dbReq(AS+`tsub.${qt(q[1])} order by i`)])}
 			catch(e) {if(e.toString().endsWith('exist')) res(re,0); else throw e}
 		break; case 'n': //New Item
-			//TODO: Rate-limit?
-			console.log("Generating UUID");
-			let u; try {u=await uuid.genUUID()} catch(e) {throw "UUID "+e}
-			await dbReq(`insert into itm.${qt(q[1])}(id) values ('${u}')`);
-			res(re,'"'+u+'"');
-		//break; case 'nc': //New Category
-		/*break; case 'cn': case 'sn': //Cat Rename
+			RA(ua), c=qt(q[1]); console.log("Generating UUID");
+			try {t=await uuid.genUUID()} catch(e) {throw "UUID "+e}
+			await dbReq(`insert into itm.${c}(id) values ('${t}')`);
+			res(re,'"'+t+'"');
+		break; case 'nc': case 'ns': //New Cat
+			RA(ua), c=qt(q[1]), t=q[0]=='nc', d=c.indexOf('0');
+			if(t) {if(d!=-1) throw "Bad Cat "+c} else { //Check for Sub
+				if(!Cat) await tCat(); let n=c.substr(0,d);
+				if(d==-1 || Cat.indexOf(n)==-1) throw "Bad Cat "+n;
+			}
+			d=(t?'tcat.':'tsub.')+c;
+			try {await dbReq('begin'); //Start transaction
+			await dbReq(`create table ${d} (i smallint, n varchar(255), t smallint, v text, primary key(i))`);
+			if(t) await Promise.all([dbReq(`insert into ${d} values(-1)`), dbReq(`create table itm.${c} (id char(11), s varchar(255), n varchar(255), u varchar(255)[], t smallint[], v text[], primary key(id))`)]);
+			await dbReq('commit'); res(re,0); //End transaction
+			if(t) await tCat();
+			} catch(e) {await dbReq('rollback');throw e}
+		/*break; case 'cn': case 'sn': //Rename Cat
 			//if(!Cat) await tCat();
 			let c=q[0]=='cn', s=c?'tcat.':'tsub.', to=qt(q[1]), tn=qt(q[2]);
 			await dbReq(`alter table ${s+to} rename to ${tn}`);
@@ -117,20 +126,23 @@ async function onReq(rq,re) {
 		}
 	} else if(pn == '/up') {
 		if(rq.method != 'POST') throw "Upload must be POST!";
-		let t=u.query, d=JSON.parse(await rqData(rq)), s='';
+		let t=u.query, d=JSON.parse(await rqData(rq)),c;
 		await dbLock(rq); console.log("Update Req:",t,d); RA(cAuth(rq));
 		switch(t) {
 		case 'i': //Update Item:
-			//TODO: Maximum array length, value length. Also, check that subcat really exists.
-			if(d.s) qt(d.s); if(d.u || d.t || d.v) {
-				t=d.t.length; if(d.u.length != t || d.v.length != t) throw "Length Mismatch!";
+			c=qt(d.c); if(d.s!=null) { //Check for Sub
+				if(!Cat) await tCat(); d.s=qt(d.s);
+				if(d.s.indexOf('0')!=-1 || (await gSub(c)).indexOf(d.s)==-1) throw "Bad Sub "+d.s;
 			}
-			for(let k in d) if(k!='c'&&k!='id') s += (s?',':'')+li(k,d[k]);
-			await uReq(`update itm.${qt(d.c)} set ${s} where id=${qs(d.id)}`);
+			if(d.u || d.t || d.v) { //Check Custom
+				t=d.t.length; if(d.u.length!=t || d.v.length!=t) throw "Length Mismatch!";
+			}
+			t=[]; for(let k in d) if(k!='c'&&k!='id') t.push(li(k,d[k]));
+			await uReq(`update itm.${c} set ${t.join()} where id=${qs(d.id)}`);
 			res(re,0);
 		break; case 'c': case 's': //Update Cat:
-			if(d.length!=2 || !Array.isArray(d[1])) throw "Inval Format";
-			t=t=='c'?1:0; let c=qt(d[0]), ct=(t?'tcat.':'tsub.')+c, p=t?'c':'s', l=d[1].length,
+			if(d.length!=2 || !Array.isArray(d[1])) throw "Bad Format";
+			t=t=='c'?1:0, c=qt(d[0]); let ct=(t?'tcat.':'tsub.')+c, p=t?'c':'s', l=d[1].length,
 			od=await dbReq(`select i,n from ${ct} order by i`), ol=od.length; d=d[1];
 			try {await dbReq('begin'); //Start transaction
 			if(t) await uReq(`update ${ct} set t=${qs(d[0].t,1)} where i=-1`); //Cat
@@ -172,7 +184,7 @@ async function onReq(rq,re) {
 		re.writeHead(307,{Location:PtlUri+RDU+"&state="+encodeURIComponent(u.query)}); re.end();
 	} else if(pn == '/auth') {
 		let k,q=fromQuery(u.query), c=';Secure;Max-Age='+UExp, l='/?'+decodeURIComponent(q.state);
-		console.log("Auth User",q); if(!q.code || !RDU) throw "Inval Auth"; k=await getAuth(q.code);
+		console.log("Auth User",q); if(!q.code || !RDU) throw "Bad Auth"; k=await getAuth(q.code);
 		re.writeHead(307, ['Location',l,'Set-Cookie','dbtkn='+k+c,'Set-Cookie','dbusr='+Tkn[k].us+c]);
 		re.end();
 	} else return 1;
@@ -184,7 +196,7 @@ async function gSub(c) {
 	s.forEach((e,i) => s[i]=e.tablename.substr(r)); return s;
 }
 async function tCat() {
-	let r=await dbReq(TS+"'itm'"); Cat=[];
+	let r=await dbReq(TS+"'tcat'"); Cat=[];
 	r.forEach((e,i) => Cat[i]=e.tablename);
 }
 
@@ -203,7 +215,7 @@ async function getAuth(c) {
 		Authorization:"Basic "+Buffer.from(AKey[0]+':'+AKey[1]).toString('base64')
 	}, `grant_type=authorization_code&code=${c}&client_id=${AKey[0]}&redirect_uri=${RDU}&scope=auto`)),
 	k=d.access_token, x=d.expires_in, t={u:d.Permissions[0].AccountId, r:d.refresh_token};
-	if(!k||!t.r||!(x>0)) throw "Inval Token"; if(!t.u) throw "Inval UUID";
+	if(!k||!t.r||!(x>0)) throw "Bad Token"; if(!t.u) throw "Bad UUID";
 	//Get User Data:
 	t.d=JSON.parse(await httpsReq(ApiUri+t.u+'/contacts/me', 'GET', {Authorization:"Bearer "+k}));
 	console.log("Token:",k,"User:",chalk.yellow(t.n=t.d.FirstName+' '+t.d.LastName),t);
@@ -211,19 +223,6 @@ async function getAuth(c) {
 	setTimeout(() => {delete Tkn[k];console.log("User Exp",t.n)}, UExp*1000);
 	Tkn[k]=t; return k;
 }
-
-/*async function rAuth(tk) {
-	let t=Tkn[tk]; if(!t) throw "No Token "+tk;
-	let d=JSON.parse(await httpsReq(AuthUri, 'POST', {
-		'Content-type':'application/x-www-form-urlencoded',
-		Authorization:"Basic "+Buffer.from(AKey[0]+':'+AKey[1]).toString('base64')
-	}, `grant_type=refresh_token&refresh_token=${t.r}`)),
-	k=d.access_token, x=d.expires_in; delete Tkn[tk]; t.r=d.refresh_token;
-	if(!k||!t.r||!(x>0)) throw "Inval Token";
-	Tkn[k]=t; console.log("Refresh Token:",k,"UID:",t.u,"Exp:",x);
-	clearTimeout(t.t);
-	t.t=setTimeout(() => {delete Tkn[k];console.log("Token Exp",t.u)}, x*1000);
-}*/
 
 //============================================== Helper Functions ==============================================
 
