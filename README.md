@@ -40,21 +40,25 @@
 - ~~Server-End: In Cat update, add check to not send redundant SQL update request for unchanged rows.~~
 - ~~Database table view mode~~
 - ~~Refresh/redraw page on subcat edit so new fields (or lack thereof) will show up~~
-- Update to latest Utils.js; Make use of Array.each
+- ~~Update to latest Utils.js; Make use of Array.each~~
 - ~~Create New CAT/SUB~~
 - ~~Check that subcat really exists in update item~~
 - ~~File uploader auto-detect for images vs files~~
-- Check for max array length, value length in update item update tcat
+- ~~For select/multi-sel: Check if options list changed by checking itm data against tcat/tsub data. Store only selected options in itm data?~~
+- ~~Prevent duplicate CAT/SUB field names server-side, will confuse swap algorithm.~~
+- ~~Log message timestamps~~
+- ~~Finish file uploader~~
+- ~~Don't allow field name "Name"~~
+- ~~Swap check should do a case-insensitive search~~
+- ~~More intuitive interface to get to CAT edit screen?~~
+- Delete images when they are no longer used somehow?
+- Check for max array length, value length in update item & update tcat
 - Item: Change Cat
 - Rename CAT/SUB
 - Delete Item
 - Delete CAT/SUB
-- Prevent duplicate CAT/SUB field names server-side, will confuse swap algorithm. Error: "Duplicate Name @ Index \[i\]"
-- More intuitive interface to get to CAT edit screen?
-- Later: Proper user management screen with logout button?
-- Should field names be stored lower case, or not? Should swap check do a case-insensitive search or not?
-- Don't allow field name "Name" because **WHY WOULD YOU DO THAT**
 - Implement search system
+- Later: Proper user management screen with logout button?
 - Later: Advanced search?
 - Later: Ability to filter for items that don't contain a value for a field (aka find missing data)
 - Add help menu **(HALP ME)**
@@ -66,8 +70,6 @@
 - No-cache on DB responses; Use cache for all else
 - Any sort of undo/snapshot option for PostgreSQL?
 - Write logs to file?
-- Log message timestamps (Include execution time for requests?)
 - Improved file-loader interface
 - List All: Replace with for-in loop
 - New Item/Cat: Rate-limit?
-- Finish file uploader

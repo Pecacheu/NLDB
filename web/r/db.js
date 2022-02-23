@@ -1,9 +1,10 @@
 //NLDB ©2021 Pecacheu. GNU GPL v3.0
 'use strict';
 let Usr, Itm, Cat, Edit, EditDone, Menu;
-const Types=['text','num','date','dt','email','tel','range','cb','sel','selm','fl','fi','sc'],
+const log=console.log, SMsgDel=3000, SErrDel=8000,
+Types=['text','num','date','dt','email','tel','range','cb','sel','selm','fl','fi','sc'],
 Img=['.png','.jpg','.jpeg','.svg'], TBD=["Item ID","Sub-Category","Name"],
-SMsgDel=3000, SErrDel=8000;
+TCU=/_/g, TCT=/^\s+|\s+$|:/g, TCS=/(?=[^a-zA-Z][a-zA-Z])/g, FN=/[^\w.]/g;
 
 window.onload = () => {
 	nAdd.onclick=addMenu.wrap();
@@ -52,8 +53,7 @@ utils.onNav = () => {
 	//View Render:
 	let p,i=location.search.substr(1); Usr=utils.getCookie('dbusr');
 	nUsr.className=Usr?'user':null, nUsr.lastChild.textContent=Usr||'';
-	console.log('NAV',i);
-	if(i.startsWith('c:')) p=catView(i.substr(2));
+	log('NAV',i); if(i.startsWith('c:')) p=catView(i.substr(2));
 	else if(i.startsWith('s:')) p=catView(i.substr(2),1);
 	else if(i.startsWith('t:')) p=tableView(i.substr(2));
 	else if(i) p=itemView(i); else p=indexView();
@@ -69,10 +69,10 @@ function getUri(uri,es,b) {
 	return new Promise((re,rj) => utils.loadAjax(uri,
 		(e,r) => {if(e) rj("<b>"+(es?es+' ':'')+"Error "+e+":</b> "+r); else re(r)},b?'POST':null,b));
 }
-function dbPost(t,d) {console.log(t,d);return getUri('up?'+t,'Upload',JSON.stringify(d))}
+function dbPost(t,d,b) {log(t,b?d.size:d);return getUri('up?'+t,'Upload',b?d:JSON.stringify(d))}
 async function dbReq() {
-	let a=[]; for(let i=0,l=arguments.length; i<l; i++) a[i]=encodeURIComponent(arguments[i]);
-	console.log(a),a=await getUri('db?'+a.join(';'),'DB'); return a?JSON.parse(a):0;
+	let a=[]; Array.prototype.each.call(arguments,(n,i) => {a[i]=encodeURIComponent(n)});
+	log(a),a=await getUri('db?'+a.join(';'),'DB'); return a?JSON.parse(a):0;
 }
 
 function iTyp(t) {let n=Types.indexOf(t);if(n==-1)throw "No Type "+t;return n}
@@ -85,8 +85,8 @@ async function dbSave() {
 		let e={id:Itm.id, c:Itm.c, s:tDbStr(Itm.SF.f.value)||null,
 			n:Itm.NF.val.trim()||null, u:[],t:[],v:[]};
 
-		Itm.cf.forEach((f,i) => e['c'+i]=f.val.trim()==Itm.cl[i+1].v?null:f.val); //Cat
-		Itm.sf.forEach((f,i) => e['s'+i]=f.val.trim()==Itm.sl[i].v?null:f.val); //Sub
+		Itm.cf.each((f,i) => {e['c'+i]=f.val.trim()==Itm.cl[i+1].v?null:f.val}); //Cat
+		Itm.sf.each((f,i) => {e['s'+i]=f.val.trim()==Itm.sl[i].v?null:f.val}); //Sub
 		for(let cl=cont.children,i=Itm.FO+1,l=cl.length,f; i<l; i++) //Usr
 			f=cl[i], e.u.push(f.name||null), e.t.push(iTyp(f.d.t)), e.v.push(f.val&&f.val.toString()||null);
 
@@ -128,20 +128,20 @@ async function indexView() {
 	setEdit(0,1,0); nBack.hidden=1;
 	let d=await dbReq('a'),c; Cat=Object.keys(d);
 	for(c in d) {
-		console.log("Check",c,d[c].length);
-		d[c].forEach(e => {e.c=c,idxItem(e)});
+		log("Check",c,d[c].length);
+		d[c].each(e => {e.c=c,idxItem(e)});
 	}
 }
 
 async function tableView(c) {
-	cont.style.overflowX='scroll', cont.style.paddingBottom=10,
+	cont.style.overflowX='auto', cont.style.paddingBottom=10,
 	Itm=0, search.style.display=null, cont.textContent='',
 	document.title=hdr.textContent="NovaLabs Inventory";
 	setEdit(0,1,1); nBack.hidden=0;
 	let d=await dbReq('l',c),tb,r,n;
-	d[1].forEach(e => {
+	d[1].each(e => {
 		if(!tb) tb=[TBD.concat(d[0])];
-		tb.push(r=[e.id,tCase(e.s),e.n]);
+		tb.push(r=["<a onclick=utils.go('?"+e.id+"')>"+e.id+"</a>",tCase(e.s),e.n]);
 		for(n=0;'c'+n in e;n++) r.push(e['c'+n]);
 		for(n=0;'s'+n in e;n++) r.push(e['s'+n]);
 	});
@@ -155,8 +155,8 @@ async function itemView(id) {
 	document.title=hdr.textContent=Itm?(Itm.e.n||"Item #"+id):"Unknown Item";
 	setEdit(0,!Itm,!Itm); nBack.hidden=0; if(!Itm) return;
 
-	let s=['']; Itm.sc.forEach(e => s.push((e==Itm.e.s?'|':'')+tCase(e)));
-	Cat=Itm.cat, Itm.id=id, Itm.sc=s; console.log(Itm); itemViewDraw();
+	let s=['']; Itm.sc.each(e => {s.push((e==Itm.e.s?'|':'')+tCase(e))});
+	Cat=Itm.cat, Itm.id=id, Itm.sc=s; log(Itm); itemViewDraw();
 }
 
 async function catView(cn,s) {
@@ -204,50 +204,30 @@ function idxItem(e) {
 	//let d=(await dbReq("select * from pg_catalog.pg_tables where schemaname='itm' like "+this.value)).rows;
 	/*for(let i=0,l=Cat.length,t,r,n,m; i<l; i++) {
 		t=Cat[i], r=(await dbReq("select * from itm."+t)).rows
-		console.log("Check",t,r.length);
-		n=0, m=r.length; Cat[i]=t; console.log("Check",t,r.length);
+		log("Check",t,r.length);
+		n=0, m=r.length; Cat[i]=t; log("Check",t,r.length);
 			for(; n<m; n++) cont.innerHTML += r[n]+"<br>"; //drawItem(r[n]);
 	}*
 }*/
-
-/*let Test=[
-	{t:'sc', n:'more'},
-	{t:'date', n:'Date Added'},
-	{t:'cost', n:'Item Price', v:15},
-	{t:'num', n:'Item Count', v:5},
-	{t:'num', n:'Decimal Test', v:[5,0,12,4]},
-	{t:'text', n:'Color', v:'Dark Blue'},
-	{t:'email', n:'Contact', v:'liamg@gmail.com'},
-	{t:'sc', n:'More Testing'},
-	{t:'tel', n:'tel', v:'703-111-1221'},
-	{t:'fl', n:'r/test.png', v:'Test Link'},
-	{t:'fl', n:'r/test.png'},
-	{t:'range', n:'slider', v:75},
-	{t:'fi', n:'r/test.png', v:'Test Image'},
-	{t:'selm', n:'Multi-Select', v:["Option A","Option B","Option C","Option D"]},
-	{t:'sel', n:'Dropdown', v:["Option A","Option B"]}
-];*/
 
 function itemViewDraw() {
 	Itm.cf=[], Itm.sf=[], Itm.uf=[];
 	utils.mkDiv(cont,null,{lineBreak:'anywhere'},JSON.stringify(Itm.e)).noGrab=1;
 	let sv=utils.mkEl('p',cont); sv.noGrab=1,aBtn(sv,"Save",dbSave,'field');
 	drawSection("Item ID #"+Itm.id,1);
-	let cs=[]; Cat.forEach((e,i) => cs[i]=(e==Itm.c?'|':'')+tCase(e));
+	let cs=[]; Cat.each((e,i) => {cs[i]=(e==Itm.c?'|':'')+tCase(e)});
 	drawField("category",'sel',cs,1).f.disabled=1;
 
 	Itm.SF=drawField("sub-category",'sel',Itm.sc,1);
 	Itm.NF=drawField("name",'text',Itm.e.n,1);
 
-	drawSection(Itm.c,1), Itm.cl.forEach(e => {
-		if(e.i==-1) return; Itm.cf.push(drawItem({t:e.t,n:e.n,
-			v:Itm.e['c'+e.i],p:e.v},'tcat',1));
-	});
-	if(Itm.e.s) drawSection(Itm.e.s,1), Itm.sl.forEach(e =>
-		Itm.sf.push(drawItem({t:e.t,n:e.n,v:Itm.e['s'+e.i],p:e.v},'tsub',1)));
+	drawSection(Itm.c,1), Itm.cl.each(e =>
+		{Itm.cf.push(drawItem({t:e.t,n:e.n,v:Itm.e['c'+e.i],p:e.v},'tcat',1))},1);
+	if(Itm.e.s) drawSection(Itm.e.s,1), Itm.sl.each(e =>
+		{Itm.sf.push(drawItem({t:e.t,n:e.n,v:Itm.e['s'+e.i],p:e.v},'tsub',1))});
 
 	Itm.FO=drawSection("other",1).index;
-	if(Itm.e.u) Itm.e.u.forEach((n,i) => drawItem({n:n,t:Itm.e.t[i],v:Itm.e.v[i]},'user'));
+	if(Itm.e.u) Itm.e.u.each((n,i) => {drawItem({n:n,t:Itm.e.t[i],v:Itm.e.v[i]},'user')});
 	fAlign();
 }
 
@@ -260,13 +240,13 @@ function catViewDraw() {
 	Itm.NF=drawField("name",'text',Itm.t,1); Itm.NF.f.disabled=1;
 
 	cvEdit(Itm.c.length-1); if(Itm.s) {
-		Itm.s.forEach((e,i) => Itm.s[i]=tCase(e)); let f=drawField("sub-categories",'sel',Itm.s,1);
+		Itm.s.each((e,i) => {Itm.s[i]=tCase(e)}); let f=drawField("sub-categories",'sel',Itm.s,1);
 		aBtn(f,"Edit",() => {let v=f.f.value; if(v) utils.go('?s:'+tDbStr(Itm.t+'-'+v))},'field');
 		aBtn(f,"New",addMenu.wrap(1),'field');
 	}
 
 	Itm.FO=drawSection("Fields",1).index;
-	Itm.c.forEach(e => {if(e.i!=-1) drawItem(e)});
+	Itm.c.each(e => {if(e.i!=-1) drawItem(e)});
 	fAlign();
 }
 
@@ -291,29 +271,25 @@ function addMenu(e) {
 		let n=utils.mkEl('input',m.s2,'field'),v; aBtn(m.s3,"Cancel",m.rem);
 		aBtn(m.s3,"Create Sub-Cat", () => {if(v=tDbStr(n.value)) m.rem(),newCat(v,1)});
 	} else if(e) {
-		m.s1.style.display=m.s2.style.display='none'; let f=e.f, opt=f.options;
-		aBtn(m.s3,"Done",m.rem);
-		aBtn(m.s3,"Remove Selected Option(s)",() => {
-			let rem=[]; for(let i=0,l=opt.length; i<l; i++) if(opt[i].selected) rem.push(opt[i]);
-			for(let i=0,l=rem.length; i<l; i++) rem[i].remove(); f.oninput();
-		});
+		m.s1.style.display=m.s2.style.display='none'; let o=e.f.options; aBtn(m.s3,"Done",m.rem);
+		aBtn(m.s3,"Remove Selected Option(s)",() => {o.each(e => e.selected?-2:null); e.f.oninput()});
 		aBtn(m.s3,"Add Option",() => {
 			m.s2.style.display=null; m.s3.textContent='';
 			utils.addText(m.s2,"Name:"); let n=utils.mkEl('input',m.s2,'field'),v;
 			utils.addText(m.s2,"Index:"); let i=utils.mkEl('input',m.s2,'field');
-			utils.numField(i,0,opt.length); i.set(opt.length);
+			utils.numField(i,0,o.length), i.set(o.length);
 			aBtn(m.s3,"Done",() => {
 				if(v=n.value.trim()) {
-					let o=utils.mkEl('option',null,null,null,v);
-					o.value=v, opt.add(o,opt[i.num]), o.selected=1;
+					let n=utils.mkEl('option',null,null,null,v);
+					n.value=v, o.add(n,o[i.num]), n.selected=1;
 				}
-				f.oninput(); addMenu(e);
+				e.f.oninput(); addMenu(e);
 			});
 		});
 		cont.insertChildAt(m,e.index+1); scrollTo(0,m.boundingRect.bottom);
 	} else if(!Itm) {
 		utils.addText(m.s2,"Category: "); let c=utils.mkEl('select',m.s2,'field'),v;
-		Cat.forEach(e => utils.mkEl('option',c,null,null,tCase(e)).value=e);
+		Cat.each(e => {utils.mkEl('option',c,null,null,tCase(e)).value=e});
 		utils.mkEl('option',c,null,null,"New").value='';
 		m.s1.remove(); aBtn(m.s3,"Cancel",m.rem);
 		aBtn(m.s3,"View",() => {if(v=c.value) m.rem(),utils.go('?t:'+v)});
@@ -372,26 +348,24 @@ function aClick() {
 	break; case "Checkbox": aSet('cb',t);
 	break; case "Image/File Link":
 		m.s1.textContent=m.s2.textContent=m.s3.textContent='';
-		utils.addText(m.s1,"Link:"); let lk=utils.mkEl('input',m.s1,'field link'),
-		fc=utils.mkDiv(m.s2,null,{width:0,height:0,overflow:'hidden'}), fr=utils.mkEl('iframe');
-		lk.onblur = () => {
-			if(!lk.value) return; if(!fr.parentNode) fc.textContent='', fc.appendChild(fr);
-			fc.style.width='100%', fc.style.height=200, fr.src=lk.value, fc.d=0;
+		utils.addText(m.s1,"Link:"); let k=utils.mkEl('input',m.s1,'field link'),
+		c=utils.mkDiv(m.s2,null,{width:0,height:0,overflow:'hidden'}), r=utils.mkEl('iframe');
+		k.onblur = () => {
+			if(!k.value) return; if(!r.parentNode) c.textContent='', c.appendChild(r);
+			c.style.width='100%', c.style.height=200, r.src=k.value, c.d=c.n=0;
 		}
 		aBtn(m.s3,"Cancel",m.rem);
-		aBtn(m.s3,"Add File",() => {
-			throw "Not Yet Implemented!";
-			/*let v=fc.ds||lk.value; if(lk.value)
-				fc.i=Img.indexOf(v.substr(v.lastIndexOf('.')))!=-1;
-			if(v) aSet(fc.i?'fi':'fl',null,v);*/
+		aBtn(m.s3,"Add File",async () => {
+			let v=k.value; if(v) c.i=Img.indexOf(v.substr(v.lastIndexOf('.')))!=-1;
+			else if(c.d) await dbPost('u'+c.n,c.d,1), v='u/'+c.n.replace(FN,'_');
+			if(v) aSet(c.i?'fi':'fl',c.i?'':c.n||v,v);
 		});
 		aBtn(m.s3,"File Uploader",() => {
 			uploadFile((d,f) => {
-				if(!d) return; fc.d=d, fc.i=f.type.startsWith('image'),
-				fc.ds="data:"+f.type+";base64,"+btoa(d);
-				fc.style.width='100%', fc.style.height=200, lk.value='', fr.remove();
-				fc.innerHTML=fc.i?
-					"<img style='height:100%;width:auto' src='"+fc.ds+"'>":"No Preview Available";
+				if(!f) return; c.d=f, c.n=f.name, c.i=f.type.startsWith('image');
+				c.style.width='100%', c.style.height=200, k.value='', r.remove();
+				c.innerHTML=c.i?"<img style='height:100%;width:auto' src='data:"
+					+f.type+";base64,"+btoa(d)+"'>":"No Preview Available";
 			});
 		});
 	break; case "Section": aSet('sc',t);
@@ -406,8 +380,8 @@ function fAlign() {
 }
 function alItm(f) {
 	let m=0,w=utils.w,a;
-	if(f[0]) f.forEach(e => {e=e.f&&e.firstChild.boundingRect.right;if(e>m) m=e});
-	m+=5, a=w<m+w*.65-12+20; f.forEach(e => {
+	if(f[0]) f.each(e => {e=e.f&&e.firstChild.boundingRect.right;if(e>m) m=e});
+	m+=5, a=w<m+w*.65-12+20; f.each(e => {
 		if(!e.f) return;
 		e.firstChild.style.marginRight=Math.max(m-e.firstChild.boundingRect.right,0);
 		if(a) e.f.style.width='100%',e.f.style.maxWidth='none';
@@ -419,8 +393,13 @@ function drawItem(f,n,l) {
 	if(typeof f.t=='number') f.t=Types[f.t];
 	let p; if(f.t=='sc') p=drawSection(f.n,l);
 	else if(f.t=='fl' || f.t=='fi') p=drawLink(f.v,f.n,f.t=='fi',l);
-	else if(f.t) p=drawField(f.n,f.t,f.v,l);
-	else throw "No such type @ "+n+" index "+f.i;
+	else if(f.t) {
+		if(f.p && f.t.startsWith('sel')) {
+			let v=f.v, n=f.v=f.p.split(',');
+			if(v) v.split(',').each(v => {v=n.indexOf(v);if(v!=-1) n[v]='|'+n[v]});
+		}
+		p=drawField(f.n,f.t,f.v,l);
+	} else throw "No such type @ "+n+" index "+f.i;
 	if(p.f&&f.p) p.f.placeholder=f.p;
 	p.d=f; return p;
 }
@@ -432,11 +411,10 @@ function drawSection(txt, lock) {
 }
 
 function drawTbl(d) {
-	let f=utils.mkEl('tbody',utils.mkEl('table',cont));
-	for(let i=0,l=d.length,r,e,b,c; i<l; i++) {
-		r=d[i], e=utils.mkEl('tr',f);
-		for(b=0,c=r.length; b<c; b++) utils.mkEl(i?'td':'th',e,null,null,r[b]);
-	}
+	let f=utils.mkEl('tbody',utils.mkEl('table',cont)),e;
+	d.each((r,i) => {
+		e=utils.mkEl('tr',f); r.each(v => {utils.mkEl(i?'td':'th',e,null,null,v)});
+	});
 	return f;
 }
 
@@ -446,18 +424,17 @@ function drawField(txt, type, val, lock) {
 	if(sl) {
 		f=utils.mkEl('select',p,'field'); if(type=='selm') f.multiple=1;
 		if(typeof val=='string') val=val.split(',');
-		if(val) for(let i=0,l=val.length,v,s,o; i<l; i++) {
-			v=val[i], s=v.startsWith('|'); if(s) v=v.substr(1);
+		if(val) val.each(v => {
+			let s=v.startsWith('|'),o; if(s) v=v.substr(1);
 			o=utils.mkEl('option',f,null,null,v); o.value=v; if(s) o.selected=1;
-		}
+		});
 	} else {
 		f=utils.mkEl('input',p,'field'); f.type=type; if(val) f.value=val;
 		switch(type) {
 			case 'dt': f.type='datetime-local'; if(val) f.value=val;
 			break; case 'num':
 				if(typeof val=='string') {
-					val=val.split(',');
-					for(let i=0,l=val.length; i<l; i++) val[i]=val[i]==null?null:Number(val[i]);
+					val=val.split(','); val.each((v,i) => {val[i]=v==null?null:Number(v)});
 				} else if(!Array.isArray(val)) val=[val];
 				utils.numField(f,val[1],val[2],val[3]); f.set(val[0]);
 			break; case 'cost': utils.costField(f);
@@ -471,8 +448,10 @@ function drawField(txt, type, val, lock) {
 		(f.onnuminput=() => p.val=f.num+m)();
 	} else (f.oninput=() => {
 		if(sl) {
-			let v=[],o=f.options,i=0,l=o.length;
-			for(; i<l; i++) v[i]=(o[i].selected?'|':'')+o[i].text; p.val=v.join();
+			let v=[],n;
+			if(lock) n=o => {if(o.selected) v.push(o.text)};
+			else n=o => {v.push((o.selected?'|':'')+o.text)};
+			f.options.each(n); p.val=v.join();
 		} else if(type=='cb') p.val=f.checked?1:0;
 		else {p.val=f.value; if(type=='range') p.ta.textContent=' '+f.value+'%'}
 	})();
@@ -509,7 +488,7 @@ function addSubBtn(type, par) {
 	else b.onmousedown=b.ontouchstart=down;
 }
 function setAS(e,d) {
-	for(let b=e.getElementsByClassName('addSub'),i=0,l=b.length; i<l; i++) b[i].style.display=d?null:'none';
+	e.getElementsByClassName('addSub').each(e => {e.style.display=d?null:'none'});
 }
 
 function editName(e) {
@@ -529,14 +508,10 @@ function editName(e) {
 	this.replaceWith(f); f.oninput(); f.focus();
 }
 
-function tDbStr(s,c) {s=s.trim().toLowerCase();return c?s.replace(/\s+/g,'_'):s}
+function tDbStr(s) {return s.trim().toLowerCase()}
 function tCase(s) {
-	s=s.replace(/_/g,' ').replace(/:/g,'').trim(); if(!s) return '';
-	s=s.split(/(?=[^a-zA-Z](?=[a-zA-Z]))/g);
-	for(let i=0,l=s.length,w; i<l; i++) {
-		w=s[i]; if(i==0) s[i]=w[0].toUpperCase()+w.substr(1);
-		else if(s[i].length > 1) s[i]=w[0]+w[1].toUpperCase()+w.substr(2);
-	}
+	if(!s) return ''; s=s.replace(TCU,' ').replace(TCT,'').split(TCS);
+	s.each((w,i) => {s[i]=(i?w[0]:'')+w[i?1:0].toUpperCase()+w.substr(i?2:1)});
 	return s.join('');
 }
 
@@ -555,7 +530,7 @@ function Grabber(el,e,hb) {
 	//Get Initial Cursor/Touch Pos:
 	if(e != null && (e.type == 'touchstart' || e.type == 'mousedown')) {
 		let t=e; if(e.type == 'touchstart') t=e.changedTouches[0], tNum=t.identifier;
-		oX=t.clientX-rect.left, oY=t.clientY-rect.top;
+		oX=t.clientX-rect.x, oY=t.clientY-rect.y;
 	}
 	//Create Dropzone Region:
 	const drop=utils.mkDiv(par,'grabInsert',{width:rect.width,height:rect.height}); drop.noGrab=1;
@@ -575,11 +550,9 @@ function Grabber(el,e,hb) {
 		addEventListener('touchmove',onDrag,{passive:false}),addEventListener('touchend',onDrop);
 	addEventListener('keydown', onCancel); onDrag(e);
 	function onDrag(e) {
-		let t=getTouch(e); if(!t) return; mX=t.clientX, mY=t.clientY;
-		if(oX == null) oX=mX-rect.left, oY=mY-rect.top;
-		cs.left=mX-oX+scrollX, cs.top=mY-oY+scrollY;
-		findDropRegion(mX+scrollX-initSX, mY+scrollY-initSY);
-		e.preventDefault();
+		e.preventDefault(); let t=getTouch(e); if(!t) return;
+		mX=t.clientX, mY=t.clientY; if(oX==null) oX=mX-rect.x, oY=mY-rect.y;
+		cs.left=mX-oX, cs.top=mY-oY; findDropRegion(mX+scrollX-initSX, mY+scrollY-initSY);
 	}
 	function onDrop(e) {
 		if(e && !getTouch(e)) return;
@@ -621,7 +594,7 @@ function Grabber(el,e,hb) {
 function uploadFile(cb) {
 	let p=utils.mkDiv(document.body,'upPop'), c=utils.mkDiv(p,'upClose',null,"Close"),
 	up=new Uploader(null,utils.mkDiv(p,'upBox'));
-	c.onclick=() => {p.style.opacity=0,setTimeout(()=>{p.remove()},1200)}
+	c.onclick=()=>{p.style.opacity=0,setTimeout(()=>{p.remove()},1200)}
 	setTimeout(()=>{p.style.opacity=1},1); up.onFileLoad=(d,f)=>{cb(d,f),c.onclick()}
 }
 
@@ -634,10 +607,9 @@ ErrorTextL="<i>Error:</i> ", ErrorTextR="!<br><strong>Try Again?</strong>";
 onFileLoad - Called once per file. An error can be returned as a string
 onLoadDone - Called once all files in a drop are processed. An error can be returned as a string*/
 
-//HTML5 Upload API v1.2 by Pecacheu
+//HTML5 Upload API v1.3 by Pecacheu
 function Uploader(extList, par, maxFiles, doneMsg) {
-	const self=this; if(!(maxFiles>0)) maxFiles=1;
-	if(typeof extList=='string') extList=[extList];
+	const self=this; if(!maxFiles) maxFiles=1;
 	//Layout:
 	let fb=utils.mkDiv(par,'upFileBox'), uc=utils.mkDiv(fb,'upContents'), ic=utils.mkDiv(uc,'icon'),
 	lb=utils.mkEl('label',uc), ip=utils.mkEl('input',uc), tx=utils.mkEl('span',uc,null,{display:'none'});
