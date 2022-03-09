@@ -1,5 +1,5 @@
 //NLDB ©2021 Pecacheu. GNU GPL v3.0
-const VERSION='v1.2.4';
+const VERSION='v1.2.5';
 
 import router from './router.js'; import uuid from './uuid.js';
 import https from 'https'; import chalk from 'chalk'; import pg from 'pg';

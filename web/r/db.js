@@ -1,6 +1,6 @@
 //NLDB ©2021 Pecacheu. GNU GPL v3.0
 'use strict';
-let Usr, Itm, Cat, Edit, EditDone, Menu;
+let Usr, Itm, Tbl, Cat, Edit, EditDone, Menu;
 const log=console.log, SMsgDel=3000, SErrDel=8000,
 Types=['text','num','date','dt','email','tel','range','cb','sel','selm','fl','fi','sc'],
 Img=['.png','.jpg','.jpeg','.svg'], TBD=["Item ID","Sub-Category","Name"],
@@ -16,28 +16,25 @@ window.onload = () => {
 		if(Edit) {
 			cont.textContent='', setEdit(0);
 			if(Itm.id) itemViewDraw(); else catViewDraw();
-		} else if(Itm && Itm.sc && !Itm.id) utils.go('?c:'+Itm.sc);
-		else utils.go('/');
+		} else if(history.state=='NLDB') utils.goBack();
+		else go('/');
 	}
-	nEdit.onclick = () => {
-		setEdit(!Edit); setAS(document,Edit);
-		if(Menu) Menu.rem();
-	}
+	nEdit.onclick = () => setEdit(!Edit);
 	if(!utils.mobile) utils.addClass('menu',{overflow:'hidden !important'});
 	uVer.textContent=utils.VER;
 }
 function setEdit(e,h,a) {
 	Edit=e, nBack.src='r/'+(e?'exit':'back')+'.svg',
 	nEdit.src='r/'+(e?'done':'edit')+'.svg', nAdd.src='r/'+(e||!Itm?'add':'qr')+'.svg';
+	setAS(document,e); if(Menu) Menu.rem(); if(h!=null) nEdit.hidden=h||!Usr;
 	if(a!=null) nAdd.hidden=a; else if(Itm) nAdd.hidden=(Itm&&!Itm.id&&!e);
-	if(h!=null) nEdit.hidden=h;
 }
 window.onresize = () => {
 	hdr.style.visibility=(hdr.boundingRect.left < 190)?'hidden':null;
 	if(Itm) fAlign();
 }
 window.onkeydown = e => {
-	if(e.key == 'Home') return utils.go('/');
+	if(e.key == 'Home') return go('/');
 	if(e.key == 'Alt' || e.key == 'ContextMenu') return setEdit(!Edit);
 	if(e.key == 'Insert' && !nAdd.hidden) return nAdd.onclick();
 	if(Menu && e.key == 'Escape') return Menu.rem();
@@ -45,6 +42,7 @@ window.onkeydown = e => {
 		if(e.key == 'Enter') EditDone(1); else if(e.key == 'Escape') EditDone();
 	} else if(e.key == 'Escape' && !nBack.hidden) nBack.onclick();
 }
+function go(p) {utils.go(p,'NLDB')}
 utils.onNav = () => {
 	//Loader:
 	let ls=load.style, ts=load.firstChild.style,
@@ -77,7 +75,7 @@ async function dbReq() {
 
 function iTyp(t) {let n=Types.indexOf(t);if(n==-1)throw "No Type "+t;return n}
 async function dbSave() {
-	if(this.SV) return; this.disabled=this.SV=1; if(Edit) nEdit.onclick();
+	if(this.SV) return; this.disabled=this.SV=1; setEdit(0);
 	let s=utils.mkEl('span',this.parentNode,null,{verticalAlign:'middle'});
 	try {if(Itm.id) { //Item Save:
 		//id = Item ID | s = Sub-Category | n = Name | u = Custom Names |
@@ -110,20 +108,20 @@ async function dbSave() {
 }
 
 async function newItem(c) {
-	try {utils.go('?'+await dbReq('n',c))}
+	try {go('?'+await dbReq('n',c))}
 	catch(e) {console.error(e),cont.innerHTML=e}
 }
 
 async function newCat(c,s) {
 	if(s) c=tDbStr(Itm.t)+'-'+c;
-	try {await dbReq(s?'ns':'nc',c),utils.go((s?'?s:':'?c:')+c)}
+	try {await dbReq(s?'ns':'nc',c),go((s?'?s:':'?c:')+c)}
 	catch(e) {console.error(e),cont.innerHTML=e}
 }
 
 //============================================== View Load ==============================================
 
 async function indexView() {
-	Itm=0, search.style.display=null, cont.textContent='',
+	Itm=Tbl=0, search.style.display=null, cont.textContent='',
 	cont.style='', document.title=hdr.textContent="NovaLabs Inventory";
 	setEdit(0,1,0); nBack.hidden=1;
 	let d=await dbReq('a'),c; Cat=Object.keys(d);
@@ -135,21 +133,21 @@ async function indexView() {
 
 async function tableView(c) {
 	cont.style.overflowX='auto', cont.style.paddingBottom=10,
-	Itm=0, search.style.display=null, cont.textContent='',
+	Itm=Tbl=0, search.style.display=null, cont.textContent='',
 	document.title=hdr.textContent="NovaLabs Inventory";
 	setEdit(0,1,1); nBack.hidden=0;
-	let d=await dbReq('l',c),tb,r,n;
+	let d=await dbReq('l',c),r,n;
 	d[1].each(e => {
-		if(!tb) tb=[TBD.concat(d[0])];
-		tb.push(r=["<a onclick=utils.go('?"+e.id+"')>"+e.id+"</a>",tCase(e.s),e.n]);
+		if(!Tbl) Tbl=[TBD.concat(d[0])];
+		Tbl.push(r=["<a onclick=go('?"+e.id+"')>"+e.id+"</a>",tCase(e.s),e.n]);
 		for(n=0;'c'+n in e;n++) r.push(e['c'+n]);
 		for(n=0;'s'+n in e;n++) r.push(e['s'+n]);
 	});
-	drawTbl(tb);
+	drawTbl();
 }
 
 async function itemView(id) {
-	Itm=await dbReq('i',id);
+	Itm=await dbReq('i',id), Tbl=0;
 	//Clear Page & Setup:
 	cont.style='', cont.textContent=Itm?'':"Item Not Found!", search.style.display='none',
 	document.title=hdr.textContent=Itm?(Itm.e.n||"Item #"+id):"Unknown Item";
@@ -170,7 +168,7 @@ async function catView(cn,s) {
 	cont.style='', document.title=hdr.textContent=(s?"Sub: ":"Cat: ")+t;
 	setEdit(0,!c,1); nBack.hidden=0; if(!c) return;
 
-	Itm={c:c[0],t:t,s:c[1],sc:sc};
+	Itm={c:c[0],t:t,s:c[1],sc:sc}, Tbl=0;
 	catViewDraw();
 }
 
@@ -194,7 +192,7 @@ async function catView(cn,s) {
 //============================================== View Render ==============================================
 
 function idxItem(e) {
-	let i=utils.mkDiv(cont,'li'); i.onclick=utils.go.wrap('?'+e.id);
+	let i=utils.mkDiv(cont,'li'); i.onclick=go.wrap('?'+e.id);
 	utils.mkDiv(i,'pre',{background:"url(r/unknown.svg) center / cover"});
 	utils.mkDiv(i,'desc',null,'<h2>'+(e.n||"Item #"+e.id)+"</h2><br><p>"+
 		tCase(e.c+(e.s?" | "+e.s:''))+(e.d==null?'':'\n'+e.d)+"</p>");
@@ -241,7 +239,7 @@ function catViewDraw() {
 
 	cvEdit(Itm.c.length-1); if(Itm.s) {
 		Itm.s.each((e,i) => {Itm.s[i]=tCase(e)}); let f=drawField("sub-categories",'sel',Itm.s,1);
-		aBtn(f,"Edit",() => {let v=f.f.value; if(v) utils.go('?s:'+tDbStr(Itm.t+'-'+v))},'field');
+		aBtn(f,"Edit",() => {let v=f.f.value; if(v) go('?s:'+tDbStr(Itm.t+'-'+v))},'field');
 		aBtn(f,"New",addMenu.wrap(1),'field');
 	}
 
@@ -292,9 +290,9 @@ function addMenu(e) {
 		Cat.each(e => {utils.mkEl('option',c,null,null,tCase(e)).value=e});
 		utils.mkEl('option',c,null,null,"New").value='';
 		m.s1.remove(); aBtn(m.s3,"Cancel",m.rem);
-		aBtn(m.s3,"View",() => {if(v=c.value) m.rem(),utils.go('?t:'+v)});
+		aBtn(m.s3,"View",() => {if(v=c.value) m.rem(),go('?t:'+v)});
 		aBtn(m.s3,"Edit",() => {
-			if(v=c.value) return m.rem(),utils.go('?c:'+v);
+			if(v=c.value) return m.rem(),go('?c:'+v);
 			m.s2.textContent=m.s3.textContent=''; utils.addText(m.s2,"Name:");
 			c=utils.mkEl('input',m.s2,'field'); aBtn(m.s3,"Cancel",m.rem);
 			aBtn(m.s3,"Create Cat", () => {if(v=tDbStr(c.value)) m.rem(),newCat(v)});
@@ -410,12 +408,20 @@ function drawSection(txt, lock) {
 	s.name=txt, s.lock=lock; return s;
 }
 
-function drawTbl(d) {
+function drawTbl() {
 	let f=utils.mkEl('tbody',utils.mkEl('table',cont)),e;
-	d.each((r,i) => {
-		e=utils.mkEl('tr',f); r.each(v => {utils.mkEl(i?'td':'th',e,null,null,v)});
+	Tbl.each((r,i) => {
+		e=utils.mkEl('tr',f); r.each((v,s) => {utils.mkEl(i?'td':'th',e,null,null,
+			(v||'')+(i||s!=Tbl.s?'':Tbl.n?' ↑':' ↓')).onclick=i?null:trClick});
 	});
 	return f;
+}
+
+function trClick() {
+	let i=this.index,h=Tbl[0],n;
+	if(i==Tbl.s) Tbl.n=!Tbl.n; Tbl.s=i; n=Tbl.n?1:-1;
+	Tbl.sort((a,b) => (a==h||b==h)?0:(a=tDbStr(a[i]), b=tDbStr(b[i]), a<b?-n:a>b?n:0));
+	cont.firstChild.remove(); drawTbl();
 }
 
 function drawField(txt, type, val, lock) {
@@ -508,7 +514,7 @@ function editName(e) {
 	this.replaceWith(f); f.oninput(); f.focus();
 }
 
-function tDbStr(s) {return s.trim().toLowerCase()}
+function tDbStr(s) {return s?s.trim().toLowerCase():''}
 function tCase(s) {
 	if(!s) return ''; s=s.replace(TCU,' ').replace(TCT,'').split(TCS);
 	s.each((w,i) => {s[i]=(i?w[0]:'')+w[i?1:0].toUpperCase()+w.substr(i?2:1)});
@@ -656,13 +662,18 @@ function Uploader(extList, par, maxFiles, doneMsg) {
 //============================================== QR Codes ==============================================
 
 function genCode(e) {
-	let qr=new QRCodeStyling({width:2048,height:2048,margin:50,data:location.origin+'?'+Itm.id,
-	image:"r/logo.png",imageOptions:{imageSize:0.5},dotsOptions:{type:'dots',color:'#f56d3c'},
-	cornersSquareOptions:{type:'extra-rounded',color:'#5a5a5e'},cornersDotOptions:{type:'dot',color:'#5a5a5e'}});
-	qr.append(e); qr=(Menu.qr=e.lastChild).style; qr.width='65%',qr.maxWidth=500;
+	let s,n=Itm.e.n,qr=new QRCodeStyling({width:2048,height:2048,margin:n?100:50,data:location.origin+'?'
+	+Itm.id,image:"r/logo.png",qrOptions:{errorCorrectionLevel:'H'},imageOptions:{imageSize:0.5},
+	dotsOptions:{type:'dots',color:'#f56d3c'},cornersSquareOptions:{type:'extra-rounded',color:'#5a5a5e'},
+	cornersDotOptions:{type:'dot',color:'#5a5a5e'}});
+	qr.append(e); s=(Menu.qr=e.lastChild).style; s.width='65%',s.maxWidth=500;
+	if(n) qr._canvasDrawingPromise.then(() => {
+		let c=Menu.qr.getContext('2d'); c.putImageData(c.getImageData(0,0,2048,2048),0,65);
+		c.font='150px Open Sans', c.fillStyle='#000'; c.fillText(n,1024-c.measureText(n).width/2,130);
+	});
 }
 function prCode() {
 	let u=Menu.qr.toDataURL();
-	printJS({printable:u,type:'image',imageStyle:'width:2in;border:1px solid #000'});
+	printJS({printable:u,type:'image',imageStyle:'width:3in;border:1px solid #000'});
 	URL.revokeObjectURL(u);
 }
