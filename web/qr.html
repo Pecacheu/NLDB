@@ -1,0 +1,43 @@
+<!-- NLDB ©2022 Pecacheu. GNU GPL v3.0 -->
+<html><head>
+<title>NovaLabs QR Generator</title>
+<link rel=icon type=image/png href=r/favicon.png>
+<meta charset=utf8>
+<meta name=viewport content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,shrink-to-fit=no">
+<style>body { background:url(r/bg.jpg) center / cover fixed; }</style>
+<script src=r/utils.js></script>
+<link rel=stylesheet type=text/css href=r/style.css>
+<script src=r/qr-code-styling.js></script>
+<script src=r/print.js></script>
+<script>
+let Menu;
+function aBtn(p,n,f,c) {utils.mkEl('button',p,c,null,n).onclick=f}
+function addMenu() {
+	let uri=qrUri.value, tt=qrTitle.value; if(!uri) return;
+	if(Menu) Menu.rem(); let m=utils.mkDiv(null,'menu');
+	m.s2=utils.mkEl('span',m), m.s3=utils.mkEl('span',m),
+	Menu=m, m.rem=()=>{m.remove(),Menu=null}
+	genCode(m.s2, uri, tt); aBtn(m.s3,"Done",m.rem); aBtn(m.s3,"Print",prCode);
+	aBtn(m.s3,"Download",() => {utils.dlData((tt||'qr')+'.png',m.qr.toDataURL())});
+	cont.appendChild(m),scrollTo(0,9999);
+}
+function genCode(e,uri,n) {
+	let s,qr=new QRCodeStyling({width:2048,height:2048,margin:n?100:50,data:uri,
+	image:"r/logo.png",qrOptions:{errorCorrectionLevel:'M'},imageOptions:{imageSize:0.5},
+	dotsOptions:{type:'square',color:'#f56d3c'},cornersSquareOptions:{type:'extra-rounded',color:'#5a5a5e'},
+	cornersDotOptions:{type:'dot',color:'#5a5a5e'}});
+	qr.append(e); s=(Menu.qr=e.lastChild).style; s.width='65%',s.maxWidth=500;
+	if(n) qr._canvasDrawingPromise.then(() => {
+		let c=Menu.qr.getContext('2d'); c.putImageData(c.getImageData(0,0,2048,2048),0,65);
+		c.font='150px Open Sans', c.fillStyle='#000'; c.fillText(n,1024-c.measureText(n).width/2,130);
+	});
+}
+function prCode() {
+	let u=Menu.qr.toDataURL();
+	printJS({printable:u,type:'image',imageStyle:'width:3in;border:1px solid #000'});
+	URL.revokeObjectURL(u);
+}
+</script>
+</head><body>
+<div id=hdrBar><h1 id=hdr style="text-align:center; width:100%">QR Generator</h1></div><div id=cBox><div id=cont><p>URL: <input type=text class=field id=qrUri></p><p>Title: <input type=text class=field id=qrTitle> (Optional)</p><p><button class=field onclick="addMenu()">Generate</button></p></div><p id=cpy>NLDB Beta v1.2.6 ©2022 <a href=https://forestfire.net>Pecacheu</a> | Utils.js <span id=uVer></span></p></div>
+</body></html>

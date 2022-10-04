@@ -1,5 +1,5 @@
-//NLDB ©2021 Pecacheu. GNU GPL v3.0
-const VERSION='v1.2.5';
+//NLDB ©2022 Pecacheu. GNU GPL v3.0
+const VERSION='v1.2.6';
 
 import router from './router.js'; import uuid from './uuid.js';
 import https from 'https'; import chalk from 'chalk'; import pg from 'pg';
@@ -8,7 +8,7 @@ let DB, SrvIp;
 
 //Config Options:
 const Debug=0, Port=50, Path="/web", ReqTimeout=5000, UExp=8*3600, MaxUpload=1000000000, //1GB
-DbOpt = {host:'localhost',user:'postgres',database:'nldb',password:'petepass'},
+MaxLogLen=1500, DbOpt = {host:'localhost',user:'postgres',database:'nldb',password:'petepass'},
 SrvOpt = {key:fs.readFileSync('../keys/privkey.pem'), cert:fs.readFileSync('../keys/fullchain.pem')};
 
 //Auth Keys:
@@ -25,9 +25,10 @@ function msg() {
 export function begin(ips) {
 	log(chalk.yellow("NLDB "+VERSION));
 	SrvIp=(ips?ips[0]:'localhost'); if(Debug == 2) router.debug=Debug;
-	DB=new pg.Client(DbOpt); DB.connect().then(() => {
+	DB=new pg.Client(DbOpt).on('error', e => log(chalk.red(e)));
+	DB.connect().then(() => {
 		msg("Connected to DB!"); initSrv(); runInput();
-	});
+	}).catch(e => log(chalk.red(e)));
 }
 
 function initSrv() {
@@ -67,14 +68,13 @@ async function onReq(rq,re) {
 		for(let i=1,l=q.length; i<l; i++) q[i]=decodeURIComponent(q[i]);
 		await dbLock(rq); msg("DB Req:",q); ua=cAuth(rq);
 		switch(q[0]) {
-		case 'a': //List All
-			if(!Cat) await tCat();
-			d={}; for(let i=0,l=Cat.length,c,dr; i<l; i++) {
-				dr=(await dbReq(`select t from tcat.${c=Cat[i]} where i=-1`))[0].t;
-				if(dr != null) dr='c'+dr;
-				d[c]=await dbReq(`select id,s,n${(dr?','+dr:'')} from itm.${c} order by n`);
-				d[c].forEach(e => {e.d=e[dr],delete e[dr]}); //Swap e[dr] -> e.c
-			}
+		case 'cl': //Cat List
+			if(!Cat) await tCat(); res(re,Cat);
+		break; case 'a': //Cat Summary
+			c=qt(q[1]), t=(await dbReq(`select t from tcat.${c} where i=-1`))[0].t;
+			if(t!=null) t='c'+t;
+			d=await dbReq(`select id,s,n${(t?','+t:'')} from itm.${c} order by n`);
+			d.forEach(e => {e.d=e[t],delete e[t]}); //Swap e[t] -> e.d
 			res(re,d);
 		break; case 'l': //List Cat
 			c=qt(q[1]), t=await Promise.all([
@@ -233,7 +233,8 @@ function res(re,r,e) {
 	let hd; if(e) {
 		log(chalk.red(e.stack||e)); if(e.toString().startsWith('Expired'))
 			hd=['Set-Cookie','dbtkn=0;Max-Age=0','Set-Cookie','dbusr=0;Max-Age=0'];
-	} else log(chalk.dim(r||null));
+	} else log(chalk.dim(r?`(${r.length}) `+
+		(r.length>MaxLogLen?r.substr(0,MaxLogLen)+'...':r):null));
 	re.writeHead(e?500:200,hd), re.end(e?e.toString():r);
 }
 
@@ -250,7 +251,7 @@ function RA(a) {if(!a) throw "Authentication Required!"}
 function cAuth(rq) {
 	let t=rq.headers.cookie, k=getCookie(t,'dbtkn'), u=getCookie(t,'dbusr');
 	if(!k) return; if(!(t=Tkn[k]) || u!=t.us) throw "Expired Token!";
-	log("Token:",k,"User:",chalk.yellow(t.n)); return 1;
+	log("Token:",k,"User:",chalk.yellow(t.n)); return t.n;
 }
 
 async function getAuth(c) {
@@ -288,7 +289,7 @@ function httpsReq(uri, mt, hdr, rb) {
 //From Utils.js
 Array.prototype.each = function(fn,st,en) {
 	let i=st||0,l=this.length,r; if(en) l=en<0?l-en:en;
-	for(; i<l; i++) if((r=fn(this[i],i,l))<-1) this.splice(i--,1),l--; else if(r!=null) return r;
+	for(; i<l; i++) if((r=fn(this[i],i,l))==='!') this.splice(i--,1),l--; else if(r!=null) return r;
 }
 
 //From Utils.js

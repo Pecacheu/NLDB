@@ -1,33 +1,40 @@
-//NLDB ©2021 Pecacheu. GNU GPL v3.0
+//NLDB ©2022 Pecacheu. GNU GPL v3.0
 'use strict';
-let Usr, Itm, Tbl, Cat, Edit, EditDone, Menu;
+let Usr, Itm, Tbl, Cat, Edit, EditDone, Menu, DB;
 const log=console.log, SMsgDel=3000, SErrDel=8000,
 Types=['text','num','date','dt','email','tel','range','cb','sel','selm','fl','fi','sc'],
 Img=['.png','.jpg','.jpeg','.svg'], TBD=["Item ID","Sub-Category","Name"],
-TCU=/_/g, TCT=/^\s+|\s+$|:/g, TCS=/(?=[^a-zA-Z][a-zA-Z])/g, FN=/[^\w.]/g;
+TCU=/_/g, TCT=/^\s+|\s+$|:/g, TCS=/(?=[^a-zA-Z][a-zA-Z])/g, FN=/[^\w.]/g,
+DbgSty={lineBreak:'anywhere',font:'12pt monospace',userSelect:'text'};
 
 window.onload = () => {
-	nAdd.onclick=addMenu.wrap();
+	DB=document.body; nAdd.onclick=addMenu.wrap();
+	nSave.title="Save", nSave.onclick=dbSave;
 	nUsr.onclick = () => {
 		if(Usr) utils.remCookie('dbtkn'),utils.remCookie('dbusr'),utils.onNav();
 		else location='/login'+location.search;
 	}
 	nBack.onclick = () => {
-		if(Edit) {
-			cont.textContent='', setEdit(0);
+		if(Edit||Itm&&Itm.dty) {
+			Itm.dty=0, cont.textContent='', setEdit(0);
 			if(Itm.id) itemViewDraw(); else catViewDraw();
 		} else if(history.state=='NLDB') utils.goBack();
 		else go('/');
 	}
-	nEdit.onclick = () => setEdit(!Edit);
+	nMenu.title="Table View", nMenu.onclick = () => go('?t:'+Tbl);
+	nEdit.onclick = () => Tbl?go('?c:'+Tbl):setEdit(!Edit);
 	if(!utils.mobile) utils.addClass('menu',{overflow:'hidden !important'});
 	uVer.textContent=utils.VER;
 }
 function setEdit(e,h,a) {
-	Edit=e, nBack.src='r/'+(e?'exit':'back')+'.svg',
+	if(nSave.SV) return;
+	let d=Itm&&Itm.dty; Edit=e, nBack.src='r/'+(e||d?'exit':'back')+'.svg',
 	nEdit.src='r/'+(e?'done':'edit')+'.svg', nAdd.src='r/'+(e||!Itm?'add':'qr')+'.svg';
 	setAS(document,e); if(Menu) Menu.rem(); if(h!=null) nEdit.hidden=h||!Usr;
 	if(a!=null) nAdd.hidden=a; else if(Itm) nAdd.hidden=(Itm&&!Itm.id&&!e);
+	nEdit.title=e?"Done":"Edit", nBack.title=e||d?"Cancel":"Back",
+	nAdd.title=e||!Itm?"Add":"Create QR Code";
+	nBack.hidden=0, nMenu.hidden=1, nSave.hidden=!(e||d);
 }
 window.onresize = () => {
 	hdr.style.visibility=(hdr.boundingRect.left < 190)?'hidden':null;
@@ -35,28 +42,41 @@ window.onresize = () => {
 }
 window.onkeydown = e => {
 	if(e.key == 'Home') return go('/');
-	if(e.key == 'Alt' || e.key == 'ContextMenu') return setEdit(!Edit);
-	if(e.key == 'Insert' && !nAdd.hidden) return nAdd.onclick();
-	if(Menu && e.key == 'Escape') return Menu.rem();
+	if(Usr) { //User-only commands
+		if(e.key == 'Control' || e.key == 'ContextMenu') return setEdit(!Edit);
+		if(e.key == 'Alt') return mDirty();
+		if(e.key == 'Insert' && !nAdd.hidden) return nAdd.onclick();
+		if(Menu && e.key == 'Escape') return Menu.rem();
+	}
 	if(EditDone) {
 		if(e.key == 'Enter') EditDone(1); else if(e.key == 'Escape') EditDone();
 	} else if(e.key == 'Escape' && !nBack.hidden) nBack.onclick();
 }
 function go(p) {utils.go(p,'NLDB')}
+window.onbeforeunload = () => Edit||Itm&&Itm.dty?"Are you sure?":null;
 utils.onNav = () => {
+	let p,i=location.search.substr(1);
+	if(Edit||Itm&&Itm.dty) {
+		if(i!=Itm.uri) {
+			alert("You haven't saved your changes! Please press SAVE or Cancel.");
+			go('?'+Itm.uri);
+		}
+		return;
+	}
 	//Loader:
 	let ls=load.style, ts=load.firstChild.style,
 	t=setTimeout(() => ts.animation='lr .8s ease-in infinite', 200);
 	ls.display=null, ls.opacity=1;
 	//View Render:
-	let p,i=location.search.substr(1); Usr=utils.getCookie('dbusr');
-	nUsr.className=Usr?'user':null, nUsr.lastChild.textContent=Usr||'';
-	log('NAV',i); if(i.startsWith('c:')) p=catView(i.substr(2));
-	else if(i.startsWith('s:')) p=catView(i.substr(2),1);
+	Usr=utils.getCookie('dbusr'), nUsr.className=Usr?'user':null,
+	nUsr.lastChild.textContent=Usr||'';
+	log('NAV',i); if(i.startsWith('l:')) p=listView(i.substr(2));
 	else if(i.startsWith('t:')) p=tableView(i.substr(2));
+	else if(i.startsWith('c:')) p=catView(i.substr(2));
+	else if(i.startsWith('s:')) p=catView(i.substr(2),1);
 	else if(i) p=itemView(i); else p=indexView();
 	p.then(onresize).catch(e => {console.error(e),cont.innerHTML=e}).finally(() => {
-		ls.opacity=0, ts.animation=null; clearTimeout(t);
+		if(Itm) Itm.uri=i; ls.opacity=0, ts.animation=null; clearTimeout(t);
 		setTimeout(() => ls.display='none', 220);
 	});
 }
@@ -75,8 +95,9 @@ async function dbReq() {
 
 function iTyp(t) {let n=Types.indexOf(t);if(n==-1)throw "No Type "+t;return n}
 async function dbSave() {
-	if(this.SV) return; this.disabled=this.SV=1; setEdit(0);
-	let s=utils.mkEl('span',this.parentNode,null,{verticalAlign:'middle'});
+	if(this.SV) return; Itm.dty=0,setEdit(0); this.SV=1;
+	let m=utils.mkDiv(this.parentNode,null,{cursor:'unset'});
+	DB.style.cursor='wait';
 	try {if(Itm.id) { //Item Save:
 		//id = Item ID | s = Sub-Category | n = Name | u = Custom Names |
 		//t = Custom Types | v = Custom Values | cX = Cat Value | sX = Sub Value
@@ -99,12 +120,13 @@ async function dbSave() {
 
 		if((n=tCase(Itm.NF.val)) != Itm.t) { //Rename:
 			await dbReq(Itm.s?'cn':'sn',tDbStr(Itm.t),tDbStr(n));
-			document.title=hdr.textContent=(s?"Sub: ":"Cat: ")+(Itm.t=n);
+			document.title=hdr.textContent=(Itm.s?"Sub: ":"Cat: ")+(Itm.t=n);
 		}
 	}
-	s.textContent=" Saved!";
-	} catch(e) {this.SV=2,console.error(e),s.innerHTML=' '+e}
-	setTimeout(() => {this.disabled=this.SV=0,s.remove()}, this.SV==2?SErrDel:SMsgDel);
+	m.textContent="Saved!";
+	} catch(e) {console.error(e);Itm.dty=m.e=1,m.innerHTML=e}
+	setTimeout(() => {this.SV=0,m.remove(),setEdit(0)}, m.e?SErrDel:SMsgDel);
+	DB.style.cursor=null;
 }
 
 async function newItem(c) {
@@ -123,23 +145,26 @@ async function newCat(c,s) {
 async function indexView() {
 	Itm=Tbl=0, search.style.display=null, cont.textContent='',
 	cont.style='', document.title=hdr.textContent="NovaLabs Inventory";
-	setEdit(0,1,0); nBack.hidden=1;
-	let d=await dbReq('a'),c; Cat=Object.keys(d);
-	for(c in d) {
-		log("Check",c,d[c].length);
-		d[c].each(e => {e.c=c,idxItem(e)});
-	}
+	setEdit(0,1,0); nBack.hidden=1; Cat=await dbReq('cl'); log("Cat",Cat);
+	Cat.each(c => idxItem({n:tCase(c),c:'Category',id:'l:'+c,ico:'r/upload.svg'}));
+}
+
+async function listView(c) {
+	Itm=0,Tbl=c, search.style.display=null, cont.textContent='',
+	cont.style='', document.title=hdr.textContent="Cat: "+tCase(c);
+	setEdit(0,0,0); nMenu.hidden=0;
+	(await dbReq('a',c)).each(e => {e.c=c,idxItem(e)});
 }
 
 async function tableView(c) {
 	cont.style.overflowX='auto', cont.style.paddingBottom=10,
 	Itm=Tbl=0, search.style.display=null, cont.textContent='',
-	document.title=hdr.textContent="NovaLabs Inventory";
-	setEdit(0,1,1); nBack.hidden=0;
-	let d=await dbReq('l',c),r,n;
+	document.title=hdr.textContent="Cat: "+tCase(c);
+	setEdit(0,1,1); let d=await dbReq('l',c),r,n;
 	d[1].each(e => {
 		if(!Tbl) Tbl=[TBD.concat(d[0])];
-		Tbl.push(r=["<a onclick=go('?"+e.id+"')>"+e.id+"</a>",tCase(e.s),e.n]);
+		Tbl.push(r=[`<a href=?${e.id} onclick="event.preventDefault();go('?${
+			e.id}')">${e.id}</a>`,tCase(e.s),e.n]);
 		for(n=0;'c'+n in e;n++) r.push(e['c'+n]);
 		for(n=0;'s'+n in e;n++) r.push(e['s'+n]);
 	});
@@ -151,7 +176,7 @@ async function itemView(id) {
 	//Clear Page & Setup:
 	cont.style='', cont.textContent=Itm?'':"Item Not Found!", search.style.display='none',
 	document.title=hdr.textContent=Itm?(Itm.e.n||"Item #"+id):"Unknown Item";
-	setEdit(0,!Itm,!Itm); nBack.hidden=0; if(!Itm) return;
+	setEdit(0,!Itm,!Itm); if(!Itm) return;
 
 	let s=['']; Itm.sc.each(e => {s.push((e==Itm.e.s?'|':'')+tCase(e))});
 	Cat=Itm.cat, Itm.id=id, Itm.sc=s; log(Itm); itemViewDraw();
@@ -166,34 +191,17 @@ async function catView(cn,s) {
 	//Clear Page & Setup:
 	cont.textContent=c?'':"No Such Category!", search.style.display='none',
 	cont.style='', document.title=hdr.textContent=(s?"Sub: ":"Cat: ")+t;
-	setEdit(0,!c,1); nBack.hidden=0; if(!c) return;
+	setEdit(0,!c,1); if(!c) return;
 
 	Itm={c:c[0],t:t,s:c[1],sc:sc}, Tbl=0;
 	catViewDraw();
 }
 
-/*function drawLoginView() {
-	//Clear Page & Setup:
-	hNavBack.hidden = hEdit.hidden = hAdd.hidden = true;
-	content.textContent = ''; search.style.display = 'none';
-	document.title = header.textContent = "User Login";
-	
-	//Draw Login Prompt:
-	drawSection("login",true); const u = drawField("username",'text',null,null,true).f,
-	p = drawField("password",'password',null,null,true).f; u.disabled = p.disabled = false;
-	utils.mkEl('button',content,null,null,"Login").onclick = function() {
-		if(u.value && p.value) {
-			utils.setCookie('lsLogin',u.value+','+p.value,Date.now()+30000);//,true
-			window.location = '';
-		}
-	}
-}*/
-
 //============================================== View Render ==============================================
 
 function idxItem(e) {
 	let i=utils.mkDiv(cont,'li'); i.onclick=go.wrap('?'+e.id);
-	utils.mkDiv(i,'pre',{background:"url(r/unknown.svg) center / cover"});
+	utils.mkDiv(i,'pre',{background:`url(${e.ico||'r/unknown.svg'}) center / cover`});
 	utils.mkDiv(i,'desc',null,'<h2>'+(e.n||"Item #"+e.id)+"</h2><br><p>"+
 		tCase(e.c+(e.s?" | "+e.s:''))+(e.d==null?'':'\n'+e.d)+"</p>");
 }
@@ -210,9 +218,8 @@ function idxItem(e) {
 
 function itemViewDraw() {
 	Itm.cf=[], Itm.sf=[], Itm.uf=[];
-	utils.mkDiv(cont,null,{lineBreak:'anywhere'},JSON.stringify(Itm.e)).noGrab=1;
-	let sv=utils.mkEl('p',cont); sv.noGrab=1,aBtn(sv,"Save",dbSave,'field');
-	drawSection("Item ID #"+Itm.id,1);
+	utils.mkDiv(cont,null,DbgSty,JSON.stringify(Itm.e)).noGrab=1;
+	drawSection("Item ID #"+Itm.id,1).onclick = mDirty.wrap();
 	let cs=[]; Cat.each((e,i) => {cs[i]=(e==Itm.c?'|':'')+tCase(e)});
 	drawField("category",'sel',cs,1).f.disabled=1;
 
@@ -230,16 +237,14 @@ function itemViewDraw() {
 }
 
 function catViewDraw() {
-	utils.mkDiv(cont,null,{lineBreak:'anywhere'},JSON.stringify(Itm.c)).noGrab=1;
-	let sv=utils.mkEl('p',cont); sv.noGrab=1,aBtn(sv,"Save",dbSave,'field');
-
+	utils.mkDiv(cont,null,DbgSty,JSON.stringify(Itm.c)).noGrab=1;
 	drawSection("Editing "+(Itm.sc?"Sub-":'')+"Category: "+Itm.t,1);
 	if(Itm.sc) drawField("category",'text',tCase(Itm.sc),1).f.disabled=1;
 	Itm.NF=drawField("name",'text',Itm.t,1); Itm.NF.f.disabled=1;
 
 	cvEdit(Itm.c.length-1); if(Itm.s) {
 		Itm.s.each((e,i) => {Itm.s[i]=tCase(e)}); let f=drawField("sub-categories",'sel',Itm.s,1);
-		aBtn(f,"Edit",() => {let v=f.f.value; if(v) go('?s:'+tDbStr(Itm.t+'-'+v))},'field');
+		f.ND=1; aBtn(f,"Edit",() => {let v=f.f.value; if(v) go('?s:'+tDbStr(Itm.t+'-'+v))},'field');
 		aBtn(f,"New",addMenu.wrap(1),'field');
 	}
 
@@ -256,7 +261,7 @@ function cvEdit(l) {
 	if(v) Itm.DF.replaceWith(d); Itm.DF=d;
 }
 
-function itmEdit() { fAlign(); if(!Itm.id) cvEdit(); }
+function itmEdit() {fAlign(); if(!Itm.id) cvEdit()}
 
 //============================================== Menu Render ==============================================
 
@@ -270,7 +275,7 @@ function addMenu(e) {
 		aBtn(m.s3,"Create Sub-Cat", () => {if(v=tDbStr(n.value)) m.rem(),newCat(v,1)});
 	} else if(e) {
 		m.s1.style.display=m.s2.style.display='none'; let o=e.f.options; aBtn(m.s3,"Done",m.rem);
-		aBtn(m.s3,"Remove Selected Option(s)",() => {o.each(e => e.selected?-2:null); e.f.oninput()});
+		aBtn(m.s3,"Remove Selected Option(s)",() => {o.each(e => e.selected?'!':null); e.f.oninput()});
 		aBtn(m.s3,"Add Option",() => {
 			m.s2.style.display=null; m.s3.textContent='';
 			utils.addText(m.s2,"Name:"); let n=utils.mkEl('input',m.s2,'field'),v;
@@ -285,8 +290,14 @@ function addMenu(e) {
 			});
 		});
 		cont.insertChildAt(m,e.index+1); scrollTo(0,m.boundingRect.bottom);
+	} else if(Tbl) {
+		utils.addText(m.s2,"Create a new item?"); m.s1.remove();
+		m.s2.style.padding='0 10'; aBtn(m.s3,"Cancel",m.rem);
+		aBtn(m.s3,"Create",() => {m.rem(),newItem(Tbl)});
 	} else if(!Itm) {
-		utils.addText(m.s2,"Category: "); let c=utils.mkEl('select',m.s2,'field'),v;
+		utils.addText(m.s2,"Sorry, this feature is currently under development.");
+		m.s1.remove(); m.s2.style.padding='0 10'; aBtn(m.s3,"Cancel",m.rem);
+		/*utils.addText(m.s2,"Category: "); let c=utils.mkEl('select',m.s2,'field'),v;
 		Cat.each(e => {utils.mkEl('option',c,null,null,tCase(e)).value=e});
 		utils.mkEl('option',c,null,null,"New").value='';
 		m.s1.remove(); aBtn(m.s3,"Cancel",m.rem);
@@ -297,9 +308,10 @@ function addMenu(e) {
 			c=utils.mkEl('input',m.s2,'field'); aBtn(m.s3,"Cancel",m.rem);
 			aBtn(m.s3,"Create Cat", () => {if(v=tDbStr(c.value)) m.rem(),newCat(v)});
 		});
-		aBtn(m.s3,"New Item",() => {if(c.value) m.rem(),newItem(c.value)});
+		aBtn(m.s3,"New Item",() => {if(c.value) m.rem(),newItem(c.value)});*/
 	} else if(!Edit) {
-		m.s1.remove(); genCode(m.s2); aBtn(m.s3,"Done",m.rem); aBtn(m.s3,"Print",prCode);
+		m.s1.remove(); genCode(m.s2, location.origin+'?'+Itm.id, Itm.e.n);
+		aBtn(m.s3,"Done",m.rem); aBtn(m.s3,"Print",prCode);
 		aBtn(m.s3,"Download",() => {utils.dlData(Itm.id+'.png',m.qr.toDataURL())});
 	} else {
 		aBtn(m.s1,"Text Field",aClick); aBtn(m.s1,"Number Field",aClick); aBtn(m.s1,"Date Field",aClick);
@@ -386,6 +398,14 @@ function alItm(f) {
 		else e.f.style.width=e.f.style.maxWidth=null;
 	});
 }
+function mDirty(m) {
+	if(Usr && Itm) Itm.dty=1,setEdit(Edit),Itm.cf.each(e => {
+		if((!m || e.f!=m.target) && e.d.n=='Last Seen' && e.f.type=='date') {
+			let d=new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString();
+			e.f.value=d.substr(0,d.indexOf('T')),e.f.oninput();
+		}
+	});
+}
 
 function drawItem(f,n,l) {
 	if(typeof f.t=='number') f.t=Types[f.t];
@@ -451,9 +471,9 @@ function drawField(txt, type, val, lock) {
 	if(f.num != null) {
 		let m=''; if(val[3]) m=','+val[1]+','+val[2]+','+val[3];
 		else if(val[2] != null) m=','+val[1]+','+val[2]; else if(val[1]) m=','+val[1];
-		(f.onnuminput=() => p.val=f.num+m)();
-	} else (f.oninput=() => {
-		if(sl) {
+		(f.onnuminput=e => {p.val=f.num+m;if(e&&!p.ND) mDirty(e)})();
+	} else (f.oninput=e => {
+		if(e&&!p.ND) mDirty(e); if(sl) {
 			let v=[],n;
 			if(lock) n=o => {if(o.selected) v.push(o.text)};
 			else n=o => {v.push((o.selected?'|':'')+o.text)};
@@ -530,7 +550,7 @@ function makeGrabable(el,btn,down,up) {
 
 function Grabber(el,e,hb) {
 	const par=el.parentElement, rect=el.boundingRect, rects=[],
-	sr=utils.mkDiv(document.body,'grabScroll',{top:document.body.scrollHeight}),
+	sr=utils.mkDiv(DB,'grabScroll',{top:DB.scrollHeight}),
 	initSX=scrollX, initSY=scrollY, sInd=el.index, self=this;
 	let mX,mY,oX,oY,tNum,select=null;
 	//Get Initial Cursor/Touch Pos:
@@ -598,7 +618,7 @@ function Grabber(el,e,hb) {
 //============================================== Uploader ==============================================
 
 function uploadFile(cb) {
-	let p=utils.mkDiv(document.body,'upPop'), c=utils.mkDiv(p,'upClose',null,"Close"),
+	let p=utils.mkDiv(DB,'upPop'), c=utils.mkDiv(p,'upClose',null,"Close"),
 	up=new Uploader(null,utils.mkDiv(p,'upBox'));
 	c.onclick=()=>{p.style.opacity=0,setTimeout(()=>{p.remove()},1200)}
 	setTimeout(()=>{p.style.opacity=1},1); up.onFileLoad=(d,f)=>{cb(d,f),c.onclick()}
@@ -627,9 +647,9 @@ function Uploader(extList, par, maxFiles, doneMsg) {
 	function prv(e) {e.preventDefault(),e.stopPropagation()}
 	function dragOver(e) {prv(e),fb.classList.add('upDragOver')}
 	function dragOut(e) {prv(e),fb.classList.remove('upDragOver')}
-	function dropRst() {document.body.style.cursor=null, ip.value=null, fb.ondrop=ip.onchange=drop}
+	function dropRst() {DB.style.cursor=null, ip.value=null, fb.ondrop=ip.onchange=drop}
 	function drop(e) {
-		fb.ondrop=ip.onchange=null; dragOut(e); txt(UploadText); document.body.style.cursor='wait';
+		fb.ondrop=ip.onchange=null; dragOut(e); txt(UploadText); DB.style.cursor='wait';
 		let f; if(e.type=='drop') f=e.dataTransfer.files; else if(e.type=='change') f=e.target.files;
 		if(!f || !f.length) return txt(LabelText),dropRst();
 		if(f.length>maxFiles) return txt(ErrorTextL+"Too many files"+ErrorTextR),dropRst();
@@ -661,10 +681,10 @@ function Uploader(extList, par, maxFiles, doneMsg) {
 
 //============================================== QR Codes ==============================================
 
-function genCode(e) {
-	let s,n=Itm.e.n,qr=new QRCodeStyling({width:2048,height:2048,margin:n?100:50,data:location.origin+'?'
-	+Itm.id,image:"r/logo.png",qrOptions:{errorCorrectionLevel:'H'},imageOptions:{imageSize:0.5},
-	dotsOptions:{type:'dots',color:'#f56d3c'},cornersSquareOptions:{type:'extra-rounded',color:'#5a5a5e'},
+function genCode(e,uri,n) {
+	let s,qr=new QRCodeStyling({width:2048,height:2048,margin:n?100:50,data:uri,
+	image:"r/logo.png",qrOptions:{errorCorrectionLevel:'M'},imageOptions:{imageSize:0.5},
+	dotsOptions:{type:'square',color:'#f56d3c'},cornersSquareOptions:{type:'extra-rounded',color:'#5a5a5e'},
 	cornersDotOptions:{type:'dot',color:'#5a5a5e'}});
 	qr.append(e); s=(Menu.qr=e.lastChild).style; s.width='65%',s.maxWidth=500;
 	if(n) qr._canvasDrawingPromise.then(() => {
