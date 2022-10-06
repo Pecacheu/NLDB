@@ -3,7 +3,7 @@
 let Usr, Itm, Tbl, Cat, Edit, EditDone, Menu, DB;
 const log=console.log, SMsgDel=3000, SErrDel=8000,
 Types=['text','num','date','dt','email','tel','range','cb','sel','selm','fl','fi','sc'],
-Img=['.png','.jpg','.jpeg','.svg'], TBD=["Item ID","Sub-Category","Name"],
+Img=['.png','.jpg','.jpeg','.svg','.gif','.heic'], TBD=["Item ID","Sub-Category","Name"],
 TCU=/_/g, TCT=/^\s+|\s+$|:/g, TCS=/(?=[^a-zA-Z][a-zA-Z])/g, FN=/[^\w.]/g,
 DbgSty={lineBreak:'anywhere',font:'12pt monospace',userSelect:'text'};
 
@@ -43,7 +43,7 @@ window.onresize = () => {
 window.onkeydown = e => {
 	if(e.key == 'Home') return go('/');
 	if(Usr) { //User-only commands
-		if(e.key == 'Control' || e.key == 'ContextMenu') return setEdit(!Edit);
+		if(e.key == 'ContextMenu') return setEdit(!Edit);
 		if(e.key == 'Alt') return mDirty();
 		if(e.key == 'Insert' && !nAdd.hidden) return nAdd.onclick();
 		if(Menu && e.key == 'Escape') return Menu.rem();
@@ -102,12 +102,15 @@ async function dbSave() {
 		//id = Item ID | s = Sub-Category | n = Name | u = Custom Names |
 		//t = Custom Types | v = Custom Values | cX = Cat Value | sX = Sub Value
 		let e={id:Itm.id, c:Itm.c, s:tDbStr(Itm.SF.f.value)||null,
-			n:Itm.NF.val.trim()||null, u:[],t:[],v:[]};
+			n:Itm.NF.val.trim()||null, u:[],t:[],v:[],ico:null};
 
 		Itm.cf.each((f,i) => {e['c'+i]=f.val.trim()==Itm.cl[i+1].v?null:f.val}); //Cat
 		Itm.sf.each((f,i) => {e['s'+i]=f.val.trim()==Itm.sl[i].v?null:f.val}); //Sub
-		for(let cl=cont.children,i=Itm.FO+1,l=cl.length,f; i<l; i++) //Usr
-			f=cl[i], e.u.push(f.name||null), e.t.push(iTyp(f.d.t)), e.v.push(f.val&&f.val.toString()||null);
+		for(let cl=cont.children,i=Itm.FO+1,l=cl.length,f,t,v; i<l; i++) { //Usr
+			f=cl[i], t=f.d.t, v=f.val&&f.val.toString()||null;
+			if(t=='fi' && f.name && f.name.toLowerCase()=='icon') e.ico=v; //Set Icon
+			else e.u.push(f.name||null), e.t.push(iTyp(t)), e.v.push(v);
+		}
 
 		await dbPost('i',e); if(e.s != Itm.e.s) setTimeout(utils.onNav,500);
 		else Itm.e=e, document.title=hdr.textContent=e.n||"Item #"+Itm.id;
@@ -201,6 +204,7 @@ async function catView(cn,s) {
 
 function idxItem(e) {
 	let i=utils.mkDiv(cont,'li'); i.onclick=go.wrap('?'+e.id);
+	log(e);
 	utils.mkDiv(i,'pre',{background:`url(${e.ico||'r/unknown.svg'}) center / cover`});
 	utils.mkDiv(i,'desc',null,'<h2>'+(e.n||"Item #"+e.id)+"</h2><br><p>"+
 		tCase(e.c+(e.s?" | "+e.s:''))+(e.d==null?'':'\n'+e.d)+"</p>");
@@ -232,7 +236,8 @@ function itemViewDraw() {
 		{Itm.sf.push(drawItem({t:e.t,n:e.n,v:Itm.e['s'+e.i],p:e.v},'tsub',1))});
 
 	Itm.FO=drawSection("other",1).index;
-	if(Itm.e.u) Itm.e.u.each((n,i) => {drawItem({n:n,t:Itm.e.t[i],v:Itm.e.v[i]},'user')});
+	if(Itm.e.ico) drawItem({t:'fi',n:'Icon',v:Itm.e.ico});
+	if(Itm.e.u) Itm.e.u.each((n,i) => {drawItem({t:Itm.e.t[i],n:n,v:Itm.e.v[i]},'user')});
 	fAlign();
 }
 
@@ -323,7 +328,7 @@ function addMenu(e) {
 
 function aBtn(p,n,f,c) {utils.mkEl('button',p,c,null,n).onclick=f}
 function aSet(t,n,v) {
-	Menu.rem(); t=drawItem({t:t,n:n,v:v}); setAS(t,1);
+	Menu.rem(); mDirty(); t=drawItem({t:t,n:n,v:v}); setAS(t,1);
 	t=t.style,t.animation='fadein 1s'; setTimeout(()=>t.animation=null,2000);
 	itmEdit();
 }
@@ -358,25 +363,29 @@ function aClick() {
 	break; case "Checkbox": aSet('cb',t);
 	break; case "Image/File Link":
 		m.s1.textContent=m.s2.textContent=m.s3.textContent='';
-		utils.addText(m.s1,"Link:"); let k=utils.mkEl('input',m.s1,'field link'),
+		utils.addText(m.s1,"Link:"); let k=utils.mkEl('input',m.s1,'field link');
+		utils.addText(m.s1,"Title:"); let tt=utils.mkEl('input',m.s1,'field'),
 		c=utils.mkDiv(m.s2,null,{width:0,height:0,overflow:'hidden'}), r=utils.mkEl('iframe');
 		k.onblur = () => {
-			if(!k.value) return; if(!r.parentNode) c.textContent='', c.appendChild(r);
+			if(!k.value) return; if(!r.parentNode) c.innerHTML='', c.appendChild(r);
 			c.style.width='100%', c.style.height=200, r.src=k.value, c.d=c.n=0;
 		}
 		aBtn(m.s3,"Cancel",m.rem);
-		aBtn(m.s3,"Add File",async () => {
-			let v=k.value; if(v) c.i=Img.indexOf(v.substr(v.lastIndexOf('.')))!=-1;
-			else if(c.d) await dbPost('u'+c.n,c.d,1), v='u/'+c.n.replace(FN,'_');
-			if(v) aSet(c.i?'fi':'fl',c.i?'':c.n||v,v);
-		});
-		aBtn(m.s3,"File Uploader",() => {
+		aBtn(m.s3,"Open Uploader",() => {
 			uploadFile((d,f) => {
 				if(!f) return; c.d=f, c.n=f.name, c.i=f.type.startsWith('image');
 				c.style.width='100%', c.style.height=200, k.value='', r.remove();
 				c.innerHTML=c.i?"<img style='height:100%;width:auto' src='data:"
 					+f.type+";base64,"+btoa(d)+"'>":"No Preview Available";
 			});
+		});
+		aBtn(m.s3,"Add",async () => {
+			c.innerHTML="Uploading..."; try {
+				let v=c.n||k.value, x=ext(v).e, n=c.n&&c.n.replace(FN,'_');
+				c.i=Img.indexOf(x)!=-1; if(c.d) await dbPost('u'+n,c.d,1),v='u/'+n;
+				if(x=='.heic') v=ext(v).f+'.jpg';
+				if(v) aSet(c.i?'fi':'fl', tCase(tt.value||(c.i?'':c.n||v)), v);
+			} catch(e) {c.innerHTML=e}
 		});
 	break; case "Section": aSet('sc',t);
 	}
@@ -399,7 +408,8 @@ function alItm(f) {
 	});
 }
 function mDirty(m) {
-	if(Usr && Itm) Itm.dty=1,setEdit(Edit),Itm.cf.each(e => {
+	if(!Usr || !Itm) return;
+	Itm.dty=1; setEdit(Edit); if(Itm.cf) Itm.cf.each(e => {
 		if((!m || e.f!=m.target) && e.d.n=='Last Seen' && e.f.type=='date') {
 			let d=new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString();
 			e.f.value=d.substr(0,d.indexOf('T')),e.f.oninput();
@@ -489,8 +499,9 @@ function drawField(txt, type, val, lock) {
 function drawLink(url, txt, img, lock) {
 	let p=utils.mkEl('p',cont);
 	if(img) {
-		let i=utils.mkEl('img',p,'fImg',null,txt);
+		let n=utils.mkDiv(p,null,null,txt), i=utils.mkEl('img',p,'fImg',null,txt);
 		i.title=txt||'', i.src=url, i.onclick=()=>{if(!Edit) location=url};
+		i.addEventListener('click',editName.bind(n));
 	} else utils.mkEl('a',p,null,null,txt||url).href=url;
 	if(lock) p.noGrab=1; else addSubBtn('drag',p),addSubBtn('sub',p);
 	p.name=txt, p.val=url, p.lock=lock; return p;
@@ -520,13 +531,16 @@ function setAS(e,d) {
 function editName(e) {
 	if(!Edit) return;
 	let s=getComputedStyle(this), f=utils.mkEl('input',null,'rn',{color:s.color,font:s.font}),
-	p=this.parentNode, tn=this.tagName, n=p.name;
+	p=this.parentNode, tn=this.tagName, n=p.name, fi=p.d.t=='fi';
 	f.oninput = () => f.style.width=utils.textWidth(f.value+' ',f.style.font);
 	EditDone = f.onblur = e => {
 		if(e) {
-			n=tCase(f.value); if(tn=='IMG') p.name=this.title=n;
-			else if(tn=='A') p.name=n,this.textContent=n?n:this.href;
-			else if(n) p.name=n,this.textContent=n+(p.tagName=='H4'?'':':');
+			n=tCase(f.value);
+			if(tn=='A') p.name=n,this.textContent=n?n:this.href;
+			else if(n||fi) {
+				p.name=n,this.textContent=n+(p.tagName=='H4'||fi?'':':');
+				if(fi) p.getElementsByTagName('img')[0].title=n;
+			}
 		}
 		EditDone=f.onblur=null; f.replaceWith(this); itmEdit();
 	}
@@ -539,6 +553,10 @@ function tCase(s) {
 	if(!s) return ''; s=s.replace(TCU,' ').replace(TCT,'').split(TCS);
 	s.each((w,i) => {s[i]=(i?w[0]:'')+w[i?1:0].toUpperCase()+w.substr(i?2:1)});
 	return s.join('');
+}
+function ext(s) {
+	let n=s.lastIndexOf('.'), d=n==-1;
+	return {f:d?s:s.substr(0,n),e:d?'':s.substr(n)};
 }
 
 //============================================== Grabable ==============================================

@@ -1,5 +1,5 @@
 //Snap UUID Generator v1.2 ©2021 Pecacheu. GNU GPL v3.0
-'use strict';
+
 const ID_DEL=500;
 import fs from 'fs'; import os from 'os'; import crypto from 'crypto';
 let Exp={},IDCount,UT; try { IDCount=Number(fs.readFileSync('uuid')); } catch(e) {}

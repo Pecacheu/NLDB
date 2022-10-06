@@ -1,13 +1,13 @@
 //NLDB ©2022 Pecacheu. GNU GPL v3.0
-const VERSION='v1.2.6';
+const VERSION='v1.2.7';
 
 import router from './router.js'; import uuid from './uuid.js';
 import https from 'https'; import chalk from 'chalk'; import pg from 'pg';
-import fs from 'fs'; import url from 'url';
+import fs from 'fs'; import url from 'url'; import {exec} from 'child_process';
 let DB, SrvIp;
 
 //Config Options:
-const Debug=0, Port=50, Path="/web", ReqTimeout=5000, UExp=8*3600, MaxUpload=1000000000, //1GB
+const Debug=0, Port=50, Path="/web", ReqTimeout=5000, UExp=8*3600, MaxUpload=10000000, //10MB
 MaxLogLen=1500, DbOpt = {host:'localhost',user:'postgres',database:'nldb',password:'petepass'},
 SrvOpt = {key:fs.readFileSync('../keys/privkey.pem'), cert:fs.readFileSync('../keys/fullchain.pem')};
 
@@ -44,7 +44,7 @@ function initSrv() {
 //============================================== Requests ==============================================
 
 let Lock, Cat, RDU, Tkn={};
-const FN=/[^\w.]/g, SP=/'/g, TP=/-/g, TVal=/^[a-z][a-z0-9_]{0,63}$/, AS="select * from ",
+const FN=/[^\w.]/, SP=/'/g, TP=/-/g, TVal=/^[a-z][a-z0-9_]{0,63}$/, AS="select * from ",
 TS="select tablename from pg_catalog.pg_tables where schemaname=";
 function qs(s,n) {
 	if(typeof s=='number') return s;
@@ -73,7 +73,7 @@ async function onReq(rq,re) {
 		break; case 'a': //Cat Summary
 			c=qt(q[1]), t=(await dbReq(`select t from tcat.${c} where i=-1`))[0].t;
 			if(t!=null) t='c'+t;
-			d=await dbReq(`select id,s,n${(t?','+t:'')} from itm.${c} order by n`);
+			d=await dbReq(`select id,s,n,ico${(t?','+t:'')} from itm.${c} order by n`);
 			d.forEach(e => {e.d=e[t],delete e[t]}); //Swap e[t] -> e.d
 			res(re,d);
 		break; case 'l': //List Cat
@@ -116,7 +116,7 @@ async function onReq(rq,re) {
 			d=(t?'tcat.':'tsub.')+c;
 			await dbReq('begin'); try { //Start transaction
 			await dbReq(`create table ${d} (i smallint, n varchar(255), t smallint, v text, primary key(i))`);
-			if(t) await Promise.all([dbReq(`insert into ${d} values(-1)`), dbReq(`create table itm.${c} (id char(11), s varchar(255), n varchar(255), u varchar(255)[], t smallint[], v text[], primary key(id))`)]);
+			if(t) await Promise.all([dbReq(`insert into ${d} values(-1)`), dbReq(`create table itm.${c} (id char(11), s varchar(255), n varchar(255), u varchar(255)[], t smallint[], v text[], ico varchar(255), primary key(id))`)]);
 			await dbReq('commit'); res(re,0); //End transaction
 			if(t) await tCat();
 			} catch(e) {await dbReq('rollback');throw e}
@@ -133,13 +133,18 @@ async function onReq(rq,re) {
 	} else if(pn == '/up') {
 		if(rq.method != 'POST') throw "Upload must be POST!";
 		let t=u.query, up=t.startsWith('u'), d=await rqData(rq),c;
-		if(t.length>100 || d.length>MaxUpload) throw "Data Too Long!";
+		if(d.length>MaxUpload) throw "File too large! Max is 10MB.";
 		if(!up) d=JSON.parse(d),await dbLock(rq);
 		msg("Update Req:",t,up?d.length:d); RA(cAuth(rq));
 		if(up) { //Upload File
-			if(t.length<2) throw "Bad Name";
-			t=Path.substr(1)+'/u/'+t.substr(1).replace(FN,'_');
-			log("Writing",t); await fs.promises.writeFile(t,d);
+			if(t.length<4 || t.length>100 || FN.test(t)) throw "Bad Name";
+			t=Path.substr(1)+'/u/'+t.substr(1); log("Writing",t);
+			await fs.promises.writeFile(t,d);
+			if(t.endsWith('.heic')) {
+				let nf=t.substr(-5)+'.jpg'; log("Converting",nf);
+				await runCmd(`/usr/bin/convert ${t} -quality 85% ${nf}`);
+				log("Erasing Temp"); await fs.promises.rm(t);
+			}
 			return res(re,0);
 		}
 		switch(t) {
@@ -200,7 +205,8 @@ async function onReq(rq,re) {
 		msg("Login Redirect"); RDU=encodeURIComponent('https://'+rq.headers.host+'/auth');
 		re.writeHead(307,{Location:PtlUri+RDU+"&state="+encodeURIComponent(u.query)}); re.end();
 	} else if(pn == '/auth') {
-		let k,q=fromQuery(u.query), c=';Secure;Max-Age='+UExp, l='/?'+decodeURIComponent(q.state);
+		let k,q=fromQuery(u.query), c=';Secure;Max-Age='+UExp,
+		s=decodeURIComponent(q.state), l='/'+(s!='null'?'?'+s:'');
 		msg("Auth User",q); if(!q.code || !RDU) throw "Bad Auth"; k=await getAuth(q.code);
 		re.writeHead(307, ['Location',l,'Set-Cookie','dbtkn='+k+c,'Set-Cookie','dbusr='+Tkn[k].us+c]);
 		re.end();
@@ -221,7 +227,7 @@ async function tCat() {
 //============================================== Database ==============================================
 
 async function dbLock(l) {
-	if(Lock && Lock.l!=l) await Lock.p;
+	while(Lock && Lock.l!=l) await Lock.p;
 	Lock={l:l}; Lock.p=new Promise(r=>Lock.r=r);
 }
 function dbUnlock(l) {if(Lock && Lock.l==l) Lock.r(),Lock=0}
@@ -284,6 +290,12 @@ function httpsReq(uri, mt, hdr, rb) {
 			else res(dat);
 		}
 	});
+}
+
+function runCmd(cmd) {
+	return new Promise((res,rej) => exec(cmd, (e,so,se) => {
+		if(e||se) return rej(e||se); res(so);
+	}));
 }
 
 //From Utils.js
