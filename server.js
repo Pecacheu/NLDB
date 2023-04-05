@@ -1,5 +1,5 @@
 //NLDB ©2022 Pecacheu. GNU GPL v3.0
-const VERSION='v1.2.7';
+const VERSION='v1.2.8';
 
 import router from './router.js'; import uuid from './uuid.js';
 import https from 'https'; import chalk from 'chalk'; import pg from 'pg';
@@ -73,7 +73,7 @@ async function onReq(rq,re) {
 		break; case 'a': //Cat Summary
 			c=qt(q[1]), t=(await dbReq(`select t from tcat.${c} where i=-1`))[0].t;
 			if(t!=null) t='c'+t;
-			d=await dbReq(`select id,s,n,ico${(t?','+t:'')} from itm.${c} order by n`);
+			d=await dbReq(`select id,s,n,ico${(t?','+t:'')} from itm.${c} order by s,n`);
 			d.forEach(e => {e.d=e[t],delete e[t]}); //Swap e[t] -> e.d
 			res(re,d);
 		break; case 'l': //List Cat
@@ -105,8 +105,15 @@ async function onReq(rq,re) {
 		break; case 'n': //New Item
 			RA(ua), c=qt(q[1]); log("Generating UUID");
 			try {t=await uuid.genUUID()} catch(e) {throw "UUID "+e}
-			await dbReq(`insert into itm.${c}(id) values ('${t}')`);
-			res(re,'"'+t+'"');
+			await dbReq('begin'); try { //Start transaction
+				await dbReq(`insert into itm.${c}(id) values ('${t}')`);
+				if(q[2]) { //Copy from item
+					let cpy=qs(q[2]), e=(await dbReq(AS+`itm.${c} where id=${cpy}`))[0], l=[];
+					for(let k in e) if(k!='id'&&k!='n') l.push(li(k,e[k]));
+					await uReq(`update itm.${c} set ${l.join()} where id='${t}'`);
+				}
+				await dbReq('commit'); res(re,'"'+t+'"'); //End transaction
+			} catch(e) {await dbReq('rollback');throw e}
 		break; case 'nc': case 'ns': //New Cat
 			RA(ua), c=qt(q[1]), t=q[0]=='nc', d=c.indexOf('0');
 			if(t) {if(d!=-1) throw "Bad Cat "+c} else { //Check for Sub
@@ -115,10 +122,10 @@ async function onReq(rq,re) {
 			}
 			d=(t?'tcat.':'tsub.')+c;
 			await dbReq('begin'); try { //Start transaction
-			await dbReq(`create table ${d} (i smallint, n varchar(255), t smallint, v text, primary key(i))`);
-			if(t) await Promise.all([dbReq(`insert into ${d} values(-1)`), dbReq(`create table itm.${c} (id char(11), s varchar(255), n varchar(255), u varchar(255)[], t smallint[], v text[], ico varchar(255), primary key(id))`)]);
-			await dbReq('commit'); res(re,0); //End transaction
-			if(t) await tCat();
+				await dbReq(`create table ${d} (i smallint, n varchar(255), t smallint, v text, primary key(i))`);
+				if(t) await Promise.all([dbReq(`insert into ${d} values(-1)`), dbReq(`create table itm.${c} (id char(11), s varchar(255), n varchar(255), u varchar(255)[], t smallint[], v text[], ico varchar(255), primary key(id))`)]);
+				await dbReq('commit'); res(re,0); //End transaction
+				if(t) await tCat();
 			} catch(e) {await dbReq('rollback');throw e}
 		/*break; case 'cn': case 'sn': //Rename Cat
 			//if(!Cat) await tCat();
@@ -141,8 +148,8 @@ async function onReq(rq,re) {
 			t=Path.substr(1)+'/u/'+t.substr(1); log("Writing",t);
 			await fs.promises.writeFile(t,d);
 			if(t.endsWith('.heic')) {
-				let nf=t.substr(-5)+'.jpg'; log("Converting",nf);
-				await runCmd(`/usr/bin/convert ${t} -quality 85% ${nf}`);
+				let nf=ext(t).f+'.jpg'; log("Converting",nf);
+				await runCmd(`convert ${t} -quality 85% ${nf}`);
 				log("Erasing Temp"); await fs.promises.rm(t);
 			}
 			return res(re,0);
@@ -325,6 +332,11 @@ function getCookie(cl,n) {
 		c=cl[i], e=c.indexOf('='); s=c.substr(0,e);
 		if(s==n || s==n2) return decodeURIComponent(c.substr(e+1));
 	}
+}
+
+function ext(s) {
+	let n=s.lastIndexOf('.'), d=n==-1;
+	return {f:d?s:s.substr(0,n),e:d?'':s.substr(n)};
 }
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];

@@ -14,10 +14,11 @@ window.onload = () => {
 		if(Usr) utils.remCookie('dbtkn'),utils.remCookie('dbusr'),utils.onNav();
 		else location='/login'+location.search;
 	}
-	nBack.onclick = () => {
+	nBack.onclick = async () => {
 		if(Edit||Itm&&Itm.dty) {
 			Itm.dty=0, cont.textContent='', setEdit(0);
-			if(Itm.id) itemViewDraw(); else catViewDraw();
+			if(Itm.id) await itemViewDraw(); else catViewDraw();
+			fAlign();
 		} else if(history.state=='NLDB') utils.goBack();
 		else go('/');
 	}
@@ -96,7 +97,8 @@ async function dbReq() {
 function iTyp(t) {let n=Types.indexOf(t);if(n==-1)throw "No Type "+t;return n}
 async function dbSave() {
 	if(this.SV) return; Itm.dty=0,setEdit(0); this.SV=1;
-	let m=utils.mkDiv(this.parentNode,null,{cursor:'unset'});
+	let m=utils.mkDiv(this.parentNode,null,{cursor:'unset'}),
+		lo=location.origin+'/', cl=cont.children;
 	DB.style.cursor='wait';
 	try {if(Itm.id) { //Item Save:
 		//id = Item ID | s = Sub-Category | n = Name | u = Custom Names |
@@ -106,9 +108,10 @@ async function dbSave() {
 
 		Itm.cf.each((f,i) => {e['c'+i]=f.val.trim()==Itm.cl[i+1].v?null:f.val}); //Cat
 		Itm.sf.each((f,i) => {e['s'+i]=f.val.trim()==Itm.sl[i].v?null:f.val}); //Sub
-		for(let cl=cont.children,i=Itm.FO+1,l=cl.length,f,t,v; i<l; i++) { //Usr
+		for(let i=Itm.FO+1,l=cl.length,f,t,v; i<l; i++) { //Usr
 			f=cl[i], t=f.d.t, v=f.val&&f.val.toString()||null;
-			if(t=='fi' && f.name && f.name.toLowerCase()=='icon') e.ico=v; //Set Icon
+			if((t=='fi'||t=='fl') && v.startsWith(lo)) v=v.substr(lo.length);
+			if(t=='fi' && f.name && tDbStr(f.name)=='icon') e.ico=v; //Set Icon
 			else e.u.push(f.name||null), e.t.push(iTyp(t)), e.v.push(v);
 		}
 
@@ -117,7 +120,7 @@ async function dbSave() {
 	} else { //Cat Save:
 		//i = Index | n = Name | t = Type | v = Default Value
 		let e=[],n; if(Itm.s) n=Itm.DF.f.num, e=[{t:n?n-1:null}];
-		for(let cl=cont.children,i=Itm.FO+1,l=cl.length,f; i<l; i++)
+		for(let i=Itm.FO+1,l=cl.length,f; i<l; i++)
 			f=cl[i], e.push({n:f.name||null, t:iTyp(f.d.t), v:f.val&&f.val.toString()||null});
 		await dbPost(Itm.s?'c':'s',[(Itm.sc?Itm.sc+'-':'')+tDbStr(Itm.t),e]);
 
@@ -132,8 +135,8 @@ async function dbSave() {
 	DB.style.cursor=null;
 }
 
-async function newItem(c) {
-	try {go('?'+await dbReq('n',c))}
+async function newItem(c,cpy) {
+	try {go('?'+await dbReq('n',c,cpy?Itm.id:''))}
 	catch(e) {console.error(e),cont.innerHTML=e}
 }
 
@@ -182,7 +185,7 @@ async function itemView(id) {
 	setEdit(0,!Itm,!Itm); if(!Itm) return;
 
 	let s=['']; Itm.sc.each(e => {s.push((e==Itm.e.s?'|':'')+tCase(e))});
-	Cat=Itm.cat, Itm.id=id, Itm.sc=s; log(Itm); itemViewDraw();
+	Cat=Itm.cat, Itm.id=id, Itm.sc=s; log(Itm); await itemViewDraw();
 }
 
 async function catView(cn,s) {
@@ -204,7 +207,6 @@ async function catView(cn,s) {
 
 function idxItem(e) {
 	let i=utils.mkDiv(cont,'li'); i.onclick=go.wrap('?'+e.id);
-	log(e);
 	utils.mkDiv(i,'pre',{background:`url(${e.ico||'r/unknown.svg'}) center / cover`});
 	utils.mkDiv(i,'desc',null,'<h2>'+(e.n||"Item #"+e.id)+"</h2><br><p>"+
 		tCase(e.c+(e.s?" | "+e.s:''))+(e.d==null?'':'\n'+e.d)+"</p>");
@@ -220,25 +222,26 @@ function idxItem(e) {
 	}*
 }*/
 
-function itemViewDraw() {
+async function itemViewDraw() {
 	Itm.cf=[], Itm.sf=[], Itm.uf=[];
 	utils.mkDiv(cont,null,DbgSty,JSON.stringify(Itm.e)).noGrab=1;
 	drawSection("Item ID #"+Itm.id,1).onclick = mDirty.wrap();
 	let cs=[]; Cat.each((e,i) => {cs[i]=(e==Itm.c?'|':'')+tCase(e)});
-	drawField("category",'sel',cs,1).f.disabled=1;
 
+	drawField("category",'sel',cs,1).f.disabled=1;
 	Itm.SF=drawField("sub-category",'sel',Itm.sc,1);
 	Itm.NF=drawField("name",'text',Itm.e.n,1);
+	let d=toDateBox(await getUUIDDate(Itm.id),1);
+	drawField("created",'dt',d,1).f.disabled=1;
 
-	drawSection(Itm.c,1), Itm.cl.each(e =>
+	Itm.CO=drawSection(Itm.c,1).index, Itm.cl.each(e =>
 		{Itm.cf.push(drawItem({t:e.t,n:e.n,v:Itm.e['c'+e.i],p:e.v},'tcat',1))},1);
 	if(Itm.e.s) drawSection(Itm.e.s,1), Itm.sl.each(e =>
 		{Itm.sf.push(drawItem({t:e.t,n:e.n,v:Itm.e['s'+e.i],p:e.v},'tsub',1))});
 
-	Itm.FO=drawSection("other",1).index;
+	Itm.FO=drawSection("more",1).index;
 	if(Itm.e.ico) drawItem({t:'fi',n:'Icon',v:Itm.e.ico});
 	if(Itm.e.u) Itm.e.u.each((n,i) => {drawItem({t:Itm.e.t[i],n:n,v:Itm.e.v[i]},'user')});
-	fAlign();
 }
 
 function catViewDraw() {
@@ -253,9 +256,8 @@ function catViewDraw() {
 		aBtn(f,"New",addMenu.wrap(1),'field');
 	}
 
-	Itm.FO=drawSection("Fields",1).index;
+	Itm.CO=Itm.FO=drawSection("Fields",1).index;
 	Itm.c.each(e => {if(e.i!=-1) drawItem(e)});
-	fAlign();
 }
 
 function cvEdit(l) {
@@ -320,8 +322,8 @@ function addMenu(e) {
 		aBtn(m.s3,"Download",() => {utils.dlData(Itm.id+'.png',m.qr.toDataURL())});
 	} else {
 		aBtn(m.s1,"Text Field",aClick); aBtn(m.s1,"Number Field",aClick); aBtn(m.s1,"Date Field",aClick);
-		aBtn(m.s2,"Dropdown Menu",aClick); aBtn(m.s2,"Email/Phone Number",aClick); aBtn(m.s2,"Slider",aClick);
-		aBtn(m.s3,"Checkbox",aClick); aBtn(m.s3,"Image/File Link",aClick); aBtn(m.s3,"Section",aClick);
+		aBtn(m.s2,"Dropdown Menu",aClick); aBtn(m.s2,"Email/Phone Number",aClick); aBtn(m.s2,"Slider/Checkbox",aClick);
+		aBtn(m.s3,"Image/File Link",aClick); aBtn(m.s3,"Section",aClick); aBtn(m.s3,"Create Copy...",aClick);
 	}
 	if(!e) cont.appendChild(m),scrollTo(0,9999);
 }
@@ -359,13 +361,18 @@ function aClick() {
 		m.s1.textContent='', m.s2.remove(), m.s3.remove();
 		aBtn(m.s1,"Email",() => aSet('email',"Email"));
 		aBtn(m.s1,"Phone Number",() => aSet('tel',"Phone"));
-	break; case "Slider": aSet('range',t);
-	break; case "Checkbox": aSet('cb',t);
+	break; case "Slider/Checkbox":
+		m.s1.textContent='', m.s2.remove(), m.s3.remove();
+		aBtn(m.s1,"Slider",() => aSet('range',t));
+		aBtn(m.s1,"Checkbox",() => aSet('cb',t));
 	break; case "Image/File Link":
 		m.s1.textContent=m.s2.textContent=m.s3.textContent='';
 		utils.addText(m.s1,"Link:"); let k=utils.mkEl('input',m.s1,'field link');
-		utils.addText(m.s1,"Title:"); let tt=utils.mkEl('input',m.s1,'field'),
+		utils.addText(m.s1,"Title:"); let tt=utils.mkEl('input',m.s1,'field'), ict,
 		c=utils.mkDiv(m.s2,null,{width:0,height:0,overflow:'hidden'}), r=utils.mkEl('iframe');
+		for(let cl=cont.children,i=Itm.FO+1,l=cl.length; i<l; i++)
+			if(tDbStr(cl[i].name)=='icon') { ict=1; break; }
+		if(!ict) tt.value='icon';
 		k.onblur = () => {
 			if(!k.value) return; if(!r.parentNode) c.innerHTML='', c.appendChild(r);
 			c.style.width='100%', c.style.height=200, r.src=k.value, c.d=c.n=0;
@@ -388,13 +395,21 @@ function aClick() {
 			} catch(e) {c.innerHTML=e}
 		});
 	break; case "Section": aSet('sc',t);
+	break; case "Create Copy...":
+		m.s1.remove(), m.s2.textContent='', m.s3.textContent='';
+		utils.addText(m.s2,"Create a copy of this item?");
+		m.s2.style.padding='0 10'; aBtn(m.s3,"Cancel",m.rem);
+		aBtn(m.s3,"Create",() => {
+			Edit=0,Itm.dty=0; m.rem(),newItem(Itm.c,1);
+		});
 	}
 }
 
 //============================================== Item Render ==============================================
 
 function fAlign() {
-	alItm(Array.prototype.slice.call(cont.children,Itm.FO+1));
+	alItm(Array.prototype.slice.call(cont.children,0,Itm.CO)); //Align Main
+	alItm(Array.prototype.slice.call(cont.children,Itm.FO+1)); //Align Custom
 	if(Itm.cf) alItm(Itm.cf); if(Itm.sf) alItm(Itm.sf);
 }
 function alItm(f) {
@@ -411,8 +426,7 @@ function mDirty(m) {
 	if(!Usr || !Itm) return;
 	Itm.dty=1; setEdit(Edit); if(Itm.cf) Itm.cf.each(e => {
 		if((!m || e.f!=m.target) && e.d.n=='Last Seen' && e.f.type=='date') {
-			let d=new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString();
-			e.f.value=d.substr(0,d.indexOf('T')),e.f.oninput();
+			e.f.value=toDateBox(Date.now()); e.f.oninput();
 		}
 	});
 }
@@ -520,6 +534,7 @@ function addSubBtn(type, par) {
 		removeEventListener('mouseup',up), removeEventListener('touchend',up);
 		if(type=='sub' && e.target==o) par.remove(),itmEdit();
 		else if(type=='add') addMenu(par); else if(type=='drag') EditDone=null;
+		mDirty();
 	}
 	if(type=='drag') makeGrabable(par,b,down,up), par.firstChild.addEventListener('click',editName);
 	else b.onmousedown=b.ontouchstart=down;
@@ -558,6 +573,14 @@ function ext(s) {
 	let n=s.lastIndexOf('.'), d=n==-1;
 	return {f:d?s:s.substr(0,n),e:d?'':s.substr(n)};
 }
+async function getUUIDDate(u) {
+	let b=await (await fetch("data:text/plain;base64,"+u)).blob();
+	return new Uint32Array(await b.arrayBuffer())[1]*10000;
+}
+function toDateBox(d,t) {
+	d=new Date(d-new Date().getTimezoneOffset()*60000).toISOString();
+	return d.substr(0,d.lastIndexOf(t?':':'T'));
+}
 
 //============================================== Grabable ==============================================
 
@@ -570,7 +593,7 @@ function Grabber(el,e,hb) {
 	const par=el.parentElement, rect=el.boundingRect, rects=[],
 	sr=utils.mkDiv(DB,'grabScroll',{top:DB.scrollHeight}),
 	initSX=scrollX, initSY=scrollY, sInd=el.index, self=this;
-	let mX,mY,oX,oY,tNum,select=null;
+	let mX,mY,oX,oY,tNum,sel=null;
 	//Get Initial Cursor/Touch Pos:
 	if(e != null && (e.type == 'touchstart' || e.type == 'mousedown')) {
 		let t=e; if(e.type == 'touchstart') t=e.changedTouches[0], tNum=t.identifier;
@@ -581,7 +604,7 @@ function Grabber(el,e,hb) {
 	//Create Element Container:
 	const cont=utils.mkDiv(null,'grabMoving',{width:rect.width,height:rect.height}), cs=cont.style;
 	cont.noGrab=1; el.remove(); cont.appendChild(el);
-	//Cache Elemnet Sizes/Positions:
+	//Cache Element Sizes/Positions:
 	for(let i=0,c=par.children,l=c.length,re,r; i<l; i++) {
 		re=c[i], r=re.boundingRect.expand(hb||10), r.e=re;
 		if(!re.noGrab || re === drop) rects.push(r);
@@ -600,10 +623,10 @@ function Grabber(el,e,hb) {
 	}
 	function onDrop(e) {
 		if(e && !getTouch(e)) return;
-		if(!select) return onCancel(); else onCancel(true); let d=(select===drop);
-		if(self.ondrop && self.ondrop.call(self,d?par.childElementCount+1:select.index) === false)
+		if(!sel) return onCancel(); else onCancel(true); let d=(sel===drop);
+		if(self.ondrop && self.ondrop.call(self,d?par.childElementCount+1:sel.index) === false)
 			par.insertChildAt(el, sInd);
-		else if(d) par.appendChild(el); else par.insertBefore(el, select);
+		else if(d) par.appendChild(el); else par.insertBefore(el, sel);
 	}
 	function onCancel(noIns) {
 		if(typeof noIns == 'object' && noIns.type == 'keydown' && noIns.key != 'Escape') return;
@@ -617,11 +640,11 @@ function Grabber(el,e,hb) {
 		drop.remove(); for(let i=0,l=rects.length,r; i<l; i++) {
 			r=rects[i]; if(r.contains(x,y)) {
 				if(r.e === drop) par.appendChild(drop);
-				else try { par.insertBefore(drop, r.e); } catch(err) {return select=null}
-				return select=r.e;
+				else try { par.insertBefore(drop, r.e); } catch(err) {return sel=null}
+				return sel=r.e;
 			}
 		}
-		select=null;
+		sel=null;
 	}
 	function getTouch(e) {
 		if(e.type == 'touchmove') {
