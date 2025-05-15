@@ -1,5 +1,5 @@
-//NLDB ©2022 Pecacheu. GNU GPL v3.0
-const VERSION='v1.2.8';
+//NLDB ©2023 Pecacheu. GNU GPL v3.0
+const VERSION='v1.2.9';
 
 import router from './router.js'; import uuid from './uuid.js';
 import https from 'https'; import chalk from 'chalk'; import pg from 'pg';
@@ -8,8 +8,9 @@ let DB, SrvIp;
 
 //Config Options:
 const Debug=0, Port=50, Path="/web", ReqTimeout=5000, UExp=8*3600, MaxUpload=10000000, //10MB
-MaxLogLen=1500, DbOpt = {host:'localhost',user:'postgres',database:'nldb',password:'petepass'},
-SrvOpt = {key:fs.readFileSync('../keys/privkey.pem'), cert:fs.readFileSync('../keys/fullchain.pem')};
+MaxLogLen=700, DbOpt = {host:'localhost',user:'postgres',database:'nldb',password:fs.readFileSync('dbpass', {encoding:'utf8'})},
+SrvOpt = {key:fs.readFileSync('../keys/privkey.pem'), cert:fs.readFileSync('../keys/fullchain.pem')},
+Perms = JSON.parse(fs.readFileSync('perms.json'));
 
 //Auth Keys:
 const AKey=fs.readFileSync('apikey','utf8').split(':'), AuthUri="https://oauth.wildapricot.org/auth/token",
@@ -18,7 +19,7 @@ ApiUri="https://api.wildapricot.org/v2/accounts/";
 
 const log=console.log;
 function msg() {
-	Array.prototype.splice.call(arguments,0,0,chalk.green('['+date()+']'));
+	Array.prototype.splice.call(arguments,0,0,chalk.green(`[${date()}]`));
 	log.apply(null,arguments);
 }
 
@@ -62,11 +63,12 @@ function ql(a) {
 function li(k,v) {return qt(k)+'='+(Array.isArray(v)?ql(v):qs(v,1))}
 
 async function onReq(rq,re) {
-	let u=url.parse(rq.url), pn=u.pathname;
+	let u=url.parse(rq.url),pn=u.pathname;
+	re.pn=pn, re.qr=u.query;
 	if(pn == '/db') {
 		let ua,q=u.query.split(';'),c,t,d;
 		for(let i=1,l=q.length; i<l; i++) q[i]=decodeURIComponent(q[i]);
-		await dbLock(rq); msg("DB Req:",q); ua=cAuth(rq);
+		await dbLock(rq); msg("DB Req:",q); ua=cAuth(rq); if(ua) re.un=ua.n;
 		switch(q[0]) {
 		case 'cl': //Cat List
 			if(!Cat) await tCat(); res(re,Cat);
@@ -94,16 +96,16 @@ async function onReq(rq,re) {
 				p=await Promise.all(p);
 				return res(re,{e:e,c:c,cat:Cat,cl:p[0],sl:e.s?p[2]:[],sc:p[1]});
 			}
-			res(re,0);
+			res(re);
 		break; case 'c': //Category
-			RA(ua), c=qt(q[1]);
+			RA(ua,1), c=qt(q[1]);
 			try {res(re,await Promise.all([dbReq(AS+`tcat.${c} order by i`), gSub(c)]))}
-			catch(e) {if(e.toString().endsWith('exist')) res(re,0); else throw e}
+			catch(e) {if(e.toString().endsWith('exist')) res(re); else throw e}
 		break; case 's': //Subcat
-			RA(ua); try {res(re,[await dbReq(AS+`tsub.${qt(q[1])} order by i`)])}
-			catch(e) {if(e.toString().endsWith('exist')) res(re,0); else throw e}
+			RA(ua,1); try {res(re,[await dbReq(AS+`tsub.${qt(q[1])} order by i`)])}
+			catch(e) {if(e.toString().endsWith('exist')) res(re); else throw e}
 		break; case 'n': //New Item
-			RA(ua), c=qt(q[1]); log("Generating UUID");
+			RA(ua,1), c=qt(q[1]); log("Generating UUID");
 			try {t=await uuid.genUUID()} catch(e) {throw "UUID "+e}
 			await dbReq('begin'); try { //Start transaction
 				await dbReq(`insert into itm.${c}(id) values ('${t}')`);
@@ -115,7 +117,7 @@ async function onReq(rq,re) {
 				await dbReq('commit'); res(re,'"'+t+'"'); //End transaction
 			} catch(e) {await dbReq('rollback');throw e}
 		break; case 'nc': case 'ns': //New Cat
-			RA(ua), c=qt(q[1]), t=q[0]=='nc', d=c.indexOf('0');
+			c=qt(q[1]), t=q[0]=='nc', d=c.indexOf('0'), RA(ua,t?3:2);
 			if(t) {if(d!=-1) throw "Bad Cat "+c} else { //Check for Sub
 				if(!Cat) await tCat(); let n=c.substr(0,d);
 				if(d==-1 || Cat.indexOf(n)==-1) throw "Bad Cat "+n;
@@ -124,7 +126,7 @@ async function onReq(rq,re) {
 			await dbReq('begin'); try { //Start transaction
 				await dbReq(`create table ${d} (i smallint, n varchar(255), t smallint, v text, primary key(i))`);
 				if(t) await Promise.all([dbReq(`insert into ${d} values(-1)`), dbReq(`create table itm.${c} (id char(11), s varchar(255), n varchar(255), u varchar(255)[], t smallint[], v text[], ico varchar(255), primary key(id))`)]);
-				await dbReq('commit'); res(re,0); //End transaction
+				await dbReq('commit'); res(re); //End transaction
 				if(t) await tCat();
 			} catch(e) {await dbReq('rollback');throw e}
 		/*break; case 'cn': case 'sn': //Rename Cat
@@ -133,16 +135,16 @@ async function onReq(rq,re) {
 			await dbReq(`alter table ${s+to} rename to ${tn}`);
 			if(c) await dbReq(`alter table itm.${to} rename to ${tn}`);
 			//await dbReq(`alter table itm.${to} rename to ${tn}`);
-			res(re,0);*/
+			res(re);*/
 		break; default:
 			throw "Inval Request";
 		}
 	} else if(pn == '/up') {
 		if(rq.method != 'POST') throw "Upload must be POST!";
-		let t=u.query, up=t.startsWith('u'), d=await rqData(rq),c;
+		let t=re.qr, up=t.startsWith('u'), d=await rqData(rq),c,e;
 		if(d.length>MaxUpload) throw "File too large! Max is 10MB.";
 		if(!up) d=JSON.parse(d),await dbLock(rq);
-		msg("Update Req:",t,up?d.length:d); RA(cAuth(rq));
+		msg("Update Req:",t,up?d.length:d); c=cAuth(rq); if(c) re.un=c.n; RA(c,2);
 		if(up) { //Upload File
 			if(t.length<4 || t.length>100 || FN.test(t)) throw "Bad Name";
 			t=Path.substr(1)+'/u/'+t.substr(1); log("Writing",t);
@@ -152,7 +154,7 @@ async function onReq(rq,re) {
 				await runCmd(`convert ${t} -quality 85% ${nf}`);
 				log("Erasing Temp"); await fs.promises.rm(t);
 			}
-			return res(re,0);
+			return res(re);
 		}
 		switch(t) {
 		case 'i': //Update Item:
@@ -163,15 +165,19 @@ async function onReq(rq,re) {
 			if(d.u || d.t || d.v) { //Check Custom
 				t=d.t.length; if(d.u.length!=t || d.v.length!=t) throw "Length Mismatch!";
 			}
-			t=[]; for(let k in d) if(k!='c'&&k!='id') t.push(li(k,d[k]));
-			await uReq(`update itm.${c} set ${t.join()} where id=${qs(d.id)}`);
-			res(re,0);
+			up=qs(d.id), t=[], re.ld=[], e=(await dbReq(AS+`itm.${c} where id=${up}`))[0];
+			for(let k in d) {
+				if(d[k]!=null && d[k].length===0) d[k]=null;
+				if(k!='c' && k!='id' && d[k]!=e[k])
+					t.push(li(k,d[k])),re.ld.push(`${k}:${e[k]}->${d[k]}`);
+			}
+			if(t.length) await uReq(`update itm.${c} set ${t.join()} where id=${qs(d.id)}`);
+			res(re);
 		break; case 'c': case 's': //Update Cat:
 			if(d.length!=2 || !Array.isArray(d[1])) throw "Bad Format";
 			t=t=='c'?1:0, c=qt(d[0]); let ct=(t?'tcat.':'tsub.')+c, p=t?'c':'s', l=d[1].length,
 			od=await dbReq(`select i,n from ${ct} order by i`), ol=od.length; d=d[1];
-			//Test Values:
-			for(let n=t,e; n<l; n++) {
+			for(let n=t,e; n<l; n++) { //Test Values
 				e=d[n],e.nv=qs(e.n),e.t=qs(e.t),e.v=qs(e.v,1);
 				if(TL(e.n)=='name' || nFind(d,e.n)!=n) throw "Dup Name "+e.n;
 			}
@@ -203,7 +209,7 @@ async function onReq(rq,re) {
 				}
 				for(let i=l; i<ol; i++) await dbReq(`alter table itm.${c} drop ${p+i}`);
 			}
-			await dbReq('commit'); res(re,0); //End transaction
+			await dbReq('commit'); res(re); //End transaction
 			} catch(e) {await dbReq('rollback');throw e}
 		break; default:
 			throw "Inval Update";
@@ -242,13 +248,19 @@ function dbUnlock(l) {if(Lock && Lock.l==l) Lock.r(),Lock=0}
 function uReq(q) {return dbReq(q,1).then(r => {if(r.rowCount<1) throw "Update Failed"})}
 function dbReq(q,nr) {log(chalk.cyan(q)),q=DB.query(q);return nr?q:q.then(r => r.rows)}
 function res(re,r,e) {
+	if(re.pn == '/up') { //Log to file
+		let s=`[${date()}] ${re.un||"Anonymous"} Update `+re.qr;
+		if(e) s+=" Failed: "+e;
+		else if(re.ld) s+=' '+(Array.isArray(re.ld)?'['+re.ld.join(', ')+']':JSON.stringify(re.ld));
+		fs.writeFile("db.log",s+'\n',{flag:'a'},e=>{if(e) msg(chalk.red(e.stack))});
+	}
 	if(typeof r=='object') r=JSON.stringify(r);
 	let hd; if(e) {
 		log(chalk.red(e.stack||e)); if(e.toString().startsWith('Expired'))
 			hd=['Set-Cookie','dbtkn=0;Max-Age=0','Set-Cookie','dbusr=0;Max-Age=0'];
 	} else log(chalk.dim(r?`(${r.length}) `+
-		(r.length>MaxLogLen?r.substr(0,MaxLogLen)+'...':r):null));
-	re.writeHead(e?500:200,hd), re.end(e?e.toString():r);
+		(r.length>MaxLogLen?r.substr(0,MaxLogLen)+'...':r):"Done"));
+	re.writeHead(e?500:200,hd), re.end(e?e.toString():(r||0));
 }
 
 function rqData(rq) {
@@ -260,11 +272,15 @@ function rqData(rq) {
 
 //============================================== User Auth ==============================================
 
-function RA(a) {if(!a) throw "Authentication Required!"}
+function RA(a,lv) {
+	if(!a) throw "Login Required!";
+	if(!(a=Perms[a.d.Email]) || !(a>=lv)) throw "Sorry, you have insufficient permissions.";
+}
 function cAuth(rq) {
 	let t=rq.headers.cookie, k=getCookie(t,'dbtkn'), u=getCookie(t,'dbusr');
 	if(!k) return; if(!(t=Tkn[k]) || u!=t.us) throw "Expired Token!";
-	log("Token:",k,"User:",chalk.yellow(t.n)); return t.n;
+	log("Token:",k,"User:",chalk.yellow(t.n),"Perms:",Perms[t.d.Email]);
+	return t;
 }
 
 async function getAuth(c) {
