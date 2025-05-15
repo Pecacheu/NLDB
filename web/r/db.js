@@ -1,4 +1,4 @@
-//NLDB ©2022 Pecacheu. GNU GPL v3.0
+//NLDB ©2023 Pecacheu. GNU GPL v3.0
 'use strict';
 let Usr, Itm, Tbl, Cat, Edit, EditDone, Menu, DB;
 const log=console.log, SMsgDel=3000, SErrDel=8000,
@@ -239,7 +239,7 @@ async function itemViewDraw() {
 	if(Itm.e.s) drawSection(Itm.e.s,1), Itm.sl.each(e =>
 		{Itm.sf.push(drawItem({t:e.t,n:e.n,v:Itm.e['s'+e.i],p:e.v},'tsub',1))});
 
-	Itm.FO=drawSection("more",1).index;
+	Itm.FO=drawSection("other",1).index;
 	if(Itm.e.ico) drawItem({t:'fi',n:'Icon',v:Itm.e.ico});
 	if(Itm.e.u) Itm.e.u.each((n,i) => {drawItem({t:Itm.e.t[i],n:n,v:Itm.e.v[i]},'user')});
 }
@@ -302,9 +302,7 @@ function addMenu(e) {
 		m.s2.style.padding='0 10'; aBtn(m.s3,"Cancel",m.rem);
 		aBtn(m.s3,"Create",() => {m.rem(),newItem(Tbl)});
 	} else if(!Itm) {
-		utils.addText(m.s2,"Sorry, this feature is currently under development.");
-		m.s1.remove(); m.s2.style.padding='0 10'; aBtn(m.s3,"Cancel",m.rem);
-		/*utils.addText(m.s2,"Category: "); let c=utils.mkEl('select',m.s2,'field'),v;
+		utils.addText(m.s2,"Category: "); let c=utils.mkEl('select',m.s2,'field'),v;
 		Cat.each(e => {utils.mkEl('option',c,null,null,tCase(e)).value=e});
 		utils.mkEl('option',c,null,null,"New").value='';
 		m.s1.remove(); aBtn(m.s3,"Cancel",m.rem);
@@ -315,7 +313,7 @@ function addMenu(e) {
 			c=utils.mkEl('input',m.s2,'field'); aBtn(m.s3,"Cancel",m.rem);
 			aBtn(m.s3,"Create Cat", () => {if(v=tDbStr(c.value)) m.rem(),newCat(v)});
 		});
-		aBtn(m.s3,"New Item",() => {if(c.value) m.rem(),newItem(c.value)});*/
+		aBtn(m.s3,"New Item",() => {if(c.value) m.rem(),newItem(c.value)});
 	} else if(!Edit) {
 		m.s1.remove(); genCode(m.s2, location.origin+'?'+Itm.id, Itm.e.n);
 		aBtn(m.s3,"Done",m.rem); aBtn(m.s3,"Print",prCode);
@@ -532,9 +530,8 @@ function addSubBtn(type, par) {
 	function up(e) {
 		o.src='r/'+type+'.svg'; if(e.type) e.preventDefault();
 		removeEventListener('mouseup',up), removeEventListener('touchend',up);
-		if(type=='sub' && e.target==o) par.remove(),itmEdit();
+		mDirty(); if(type=='sub' && e.target==o) par.remove(),itmEdit();
 		else if(type=='add') addMenu(par); else if(type=='drag') EditDone=null;
-		mDirty();
 	}
 	if(type=='drag') makeGrabable(par,b,down,up), par.firstChild.addEventListener('click',editName);
 	else b.onmousedown=b.ontouchstart=down;
