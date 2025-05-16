@@ -152,7 +152,7 @@ async function indexView() {
 	Itm=Tbl=0, search.style.display=null, cont.textContent='',
 	cont.style='', document.title=hdr.textContent="NovaLabs Inventory";
 	setEdit(0,1,0); nBack.hidden=1; Cat=await dbReq('cl'); log("Cat",Cat);
-	Cat.each(c => idxItem({n:tCase(c),c:'Category',id:'l:'+c,ico:'r/upload.svg'}));
+	Cat.each(c => idxItem({n:tCase(c.n),c:'Category',id:'l:'+c.n,ico:'r/upload.svg'}));
 }
 
 async function listView(c) {

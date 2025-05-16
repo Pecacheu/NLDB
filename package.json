@@ -1,1 +1,7 @@
-{"type":"module"}
+{
+	"type": "module",
+	"dependencies": {
+		"chalk": "^5.4.1",
+		"mongodb": "^6.16.0"
+	}
+}

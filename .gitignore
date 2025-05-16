@@ -1,7 +1,7 @@
+node_modules
+config.json
 uuid
-apikey
 perms.json
 db.log
-dbpass
 nldb-bak.sql
 web/u

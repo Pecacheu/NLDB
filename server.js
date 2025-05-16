@@ -1,50 +1,68 @@
-//NLDB ©2023 Pecacheu. GNU GPL v3.0
-const VERSION='v1.2.9';
+//NLDB, Pecacheu 2025. GNU GPL v3
+const VER='v2.0 a1';
 
-import router from './router.js'; import uuid from './uuid.js';
-import https from 'https'; import chalk from 'chalk'; import pg from 'pg';
-import fs from 'fs'; import url from 'url'; import {exec} from 'child_process';
-let DB, SrvIp;
+import fs from 'fs/promises';
+import http from 'http';
+import https from 'https';
+//import {exec} from 'child_process';
+import chalk from 'chalk';
+import mdb from 'mongodb';
+import router from './router.js';
+import UUID from './uuid.js';
 
-//Config Options:
-const Debug=0, Port=50, Path="/web", ReqTimeout=5000, UExp=8*3600, MaxUpload=10000000, //10MB
-MaxLogLen=700, DbOpt = {host:'localhost',user:'postgres',database:'nldb',password:fs.readFileSync('dbpass', {encoding:'utf8'})},
-SrvOpt = {key:fs.readFileSync('../keys/privkey.pem'), cert:fs.readFileSync('../keys/fullchain.pem')},
+const Path="/web",
+/*
+ReqTimeout=5000,
+UExp=8*3600,
+MaxUpload=10000000, //10MB
+*/
+MaxLogLen=700,
+/*
 Perms = JSON.parse(fs.readFileSync('perms.json'));
 
 //Auth Keys:
 const AKey=fs.readFileSync('apikey','utf8').split(':'), AuthUri="https://oauth.wildapricot.org/auth/token",
 PtlUri=`https://portal.nova-labs.org/sys/login/OAuthLogin?client_id=${AKey[0]}&scope=auto&redirect_uri=`,
 ApiUri="https://api.wildapricot.org/v2/accounts/";
+*/
+LogDateFmt={sec:true, suf:false, year:false, df:true},
+Conf=JSON.parse(await fs.readFile('config.json')),
+SrvOpt=Conf.sslKey?{key:await fs.readFile(Conf.sslKey), cert:await fs.readFile(Conf.sslCert)}:null,
+print=console.log, CL=[];
+let DB, Cat, Lock; //RDU, Tkn={};
 
-const log=console.log;
-function msg() {
-	Array.prototype.splice.call(arguments,0,0,chalk.green(`[${date()}]`));
-	log.apply(null,arguments);
-}
+if(Conf.debug>1) router.debug=1;
 
-export function begin(ips) {
-	log(chalk.yellow("NLDB "+VERSION));
-	SrvIp=(ips?ips[0]:'localhost'); if(Debug == 2) router.debug=Debug;
-	DB=new pg.Client(DbOpt).on('error', e => log(chalk.red(e)));
-	DB.connect().then(() => {
-		msg("Connected to DB!"); initSrv(); runInput();
-	}).catch(e => log(chalk.red(e)));
-}
+async function begin() {
+	const ips=utils.getIPs(), [sysOS, arch, cpu]=utils.getOS(), srvIP=ips?ips[0]:'localhost';
+	print("IP:",ips,`OS: ${sysOS}, ${arch}\nCPU: ${cpu}\n`);
 
-function initSrv() {
-	https.createServer(SrvOpt, (rq,re) => {
-		if(Debug) log("[ROUTER]",rq.url);
-		onReq(rq,re).then(r => {if(r) router.handle(Path,re,rq)})
-			.catch(e => res(re,0,e)).finally(() => dbUnlock(rq));
-	}).listen(Port, () => {
-		log("Listening at "+chalk.bgGreen('https://'+SrvIp+':'+Port));
+	print(chalk.yellow(`NLDB ${VER}`));
+	if(sysOS !== 'Linux') {
+		print(chalk.yellow(chalk.underline("Warning: Thumbnail generation via ImageMagick only supported on Linux")));
+	}
+	//TODO else setup ImageMagick stuff
+
+	print("Loading database...");
+	DB = new mdb.MongoClient(Conf.dbUri).db('nldb');
+	Cat = DB.collection('cat');
+	for await(let c of Cat.find()) loadCat(new UUID(c._id).toString());
+
+	const rqCb=async (rq,re) => {
+		if(Conf.debug) msg("[REQ]",rq.url);
+		let r,err;
+		try {(r=await onReq(rq,re))} catch(e) {err=e} finally {
+			dbUnlock(rq); if(r||err) res(re,r,err); else router.handle(Path,re,rq);
+		}
+	}
+	(SrvOpt?https.createServer(SrvOpt, rqCb):http.createServer(rqCb)).listen(Conf.port, () => {
+		print("Listening at "+chalk.bgGreen(`http${SrvOpt?'s':''}://${srvIP}:${Conf.port}`));
 	});
 }
 
 //============================================== Requests ==============================================
 
-let Lock, Cat, RDU, Tkn={};
+/*
 const FN=/[^\w.]/, SP=/'/g, TP=/-/g, TVal=/^[a-z][a-z0-9_]{0,63}$/, AS="select * from ",
 TS="select tablename from pg_catalog.pg_tables where schemaname=";
 function qs(s,n) {
@@ -61,17 +79,20 @@ function ql(a) {
 	for(; i<l; i++) s+=(s?',':'')+qs(a[i],1); return 'array['+s+']';
 }
 function li(k,v) {return qt(k)+'='+(Array.isArray(v)?ql(v):qs(v,1))}
-
-async function onReq(rq,re) {
-	let u=url.parse(rq.url),pn=u.pathname;
-	re.pn=pn, re.qr=u.query;
-	if(pn == '/db') {
-		let ua,q=u.query.split(';'),c,t,d;
+*/
+async function onReq(req, res) {
+	let u=new URL(req.url,'http://a'), pn=u.pathname;
+	res.pn=pn, res.q=u.search;
+	if(pn === '/db') { //DB Cmd
+		if(res.q.length < 2) throw "Bad args";
+		let q=res.q.slice(1).split(';');
+		q.forEach((r,i) => q[i]=decodeURIComponent(r));
+		return await dbCmd(q);
+	}
+/*		let ua,q=u.query.split(';'),c,t,d;
 		for(let i=1,l=q.length; i<l; i++) q[i]=decodeURIComponent(q[i]);
 		await dbLock(rq); msg("DB Req:",q); ua=cAuth(rq); if(ua) re.un=ua.n;
 		switch(q[0]) {
-		case 'cl': //Cat List
-			if(!Cat) await tCat(); res(re,Cat);
 		break; case 'a': //Cat Summary
 			c=qt(q[1]), t=(await dbReq(`select t from tcat.${c} where i=-1`))[0].t;
 			if(t!=null) t='c'+t;
@@ -135,7 +156,7 @@ async function onReq(rq,re) {
 			await dbReq(`alter table ${s+to} rename to ${tn}`);
 			if(c) await dbReq(`alter table itm.${to} rename to ${tn}`);
 			//await dbReq(`alter table itm.${to} rename to ${tn}`);
-			res(re);*/
+			res(re);*
 		break; default:
 			throw "Inval Request";
 		}
@@ -214,18 +235,23 @@ async function onReq(rq,re) {
 		break; default:
 			throw "Inval Update";
 		}
-	} else if(pn == '/login') {
-		msg("Login Redirect"); RDU=encodeURIComponent('https://'+rq.headers.host+'/auth');
-		re.writeHead(307,{Location:PtlUri+RDU+"&state="+encodeURIComponent(u.query)}); re.end();
-	} else if(pn == '/auth') {
+	}*/ else if(pn == '/login') {
+		//msg("Login Redirect"); RDU=encodeURIComponent('https://'+rq.headers.host+'/auth');
+		//re.writeHead(307,{Location:PtlUri+RDU+"&state="+encodeURIComponent(u.query)}); re.end();
+		//TODO TEMP REDIRECT SKIP AUTH
+		let k='testtkn', c=';Secure;Max-Age='+UExp, t=Tkn[k]={n:"Test User", us:"TU", d:{Email:"test@example.com"}};
+		log("Token:",k,"User:",chalk.yellow(t.n),t);
+		re.writeHead(307, ['Location','/','Set-Cookie','dbtkn='+k+c,'Set-Cookie','dbusr='+t.us+c]);
+		re.end();
+	} /*else if(pn == '/auth') {
 		let k,q=fromQuery(u.query), c=';Secure;Max-Age='+UExp,
 		s=decodeURIComponent(q.state), l='/'+(s!='null'?'?'+s:'');
 		msg("Auth User",q); if(!q.code || !RDU) throw "Bad Auth"; k=await getAuth(q.code);
 		re.writeHead(307, ['Location',l,'Set-Cookie','dbtkn='+k+c,'Set-Cookie','dbusr='+Tkn[k].us+c]);
 		re.end();
-	} else return 1;
+	}*/
 }
-
+/*
 function TL(s) {return s?s.toLowerCase():s}
 function nFind(t,n) {n=TL(n);return t.each((d,i) => TL(d.n)==n?i:null)}
 async function gSub(c) {
@@ -235,34 +261,97 @@ async function gSub(c) {
 async function tCat() {
 	let r=await dbReq(TS+"'tcat'"); Cat=[];
 	r.each((e,i) => {Cat[i]=e.tablename});
-}
+}*/
 
 //============================================== Database ==============================================
 
+const NameFmt=/[A-Z][\w\- ]*\w/;
+
 async function dbLock(l) {
-	while(Lock && Lock.l!=l) await Lock.p;
+	while(Lock && Lock.l!==l) await Lock.p;
 	Lock={l:l}; Lock.p=new Promise(r=>Lock.r=r);
 }
-function dbUnlock(l) {if(Lock && Lock.l==l) Lock.r(),Lock=0}
+function dbUnlock(l) {if(Lock && Lock.l===l) Lock.r(),Lock=0}
 
-function uReq(q) {return dbReq(q,1).then(r => {if(r.rowCount<1) throw "Update Failed"})}
-function dbReq(q,nr) {log(chalk.cyan(q)),q=DB.query(q);return nr?q:q.then(r => r.rows)}
+function loadCat(id) {
+	CL[id] = {
+		itm: DB.collection(`itm.${id}`), inv: DB.collection(`inv.${id}`),
+		loc: DB.collection(`loc.${id}`), log: DB.collection(`log.${id}`)
+	}
+}
+
+//Convert _id into UUID
+function fromDbId(doc) {
+	doc.id = new UUID(doc._id).toString();
+	delete doc._id;
+}
+function toDbId(id) {return new UUID(id).toLong()}
+
+async function dbCmd(q) {
+	msg("[CMD]",q);
+	let id,c,d;
+	switch(q[0]) {
+	//---- Read ----
+	case 'cl': //List Cat
+		d=await Cat.find({}, {sort: ['n'], projection: {_id:1, n:1}}).toArray();
+		for(c of d) fromDbId(c);
+		return d;
+	//TODO
+	//---- Update ----
+	//TODO
+	//---- Create ----
+	case 'nc': //New Cat
+		if(q.length !== 2) throw "Bad args";
+		if(!NameFmt.test(q[1])) throw "Bad name";
+		id=await UUID.genUUID();
+		await Cat.insertOne({_id:id.toLong(), n:q[1]});
+		loadCat(id.toString());
+		return 1;
+	case 'ns': //New SubCat
+		if(q.length !== 3) throw "Bad args";
+		if(q[1].length !== UUID.LEN) throw "Bad ID";
+		if(!NameFmt.test(q[2])) throw "Bad name";
+		id=await UUID.genUUID();
+		d=await Cat.updateOne({_id:toDbId(q[1])}, {$push: {s:{_id:id.toLong(), n:q[2]}}});
+		if(d.modifiedCount !== 1) throw "Cat not found";
+		return 1;
+	//case 'np': //New Part
+	//case 'ni': //New Item
+	//TODO
+	//---- Delete ----
+	//TODO
+	default:
+		throw "Unknown cmd";
+/*
+			await dbReq(`create table ${d} (i smallint, n varchar(255), t smallint, v text, primary key(i))`);
+			if(t) await Promise.all([dbReq(`insert into ${d} values(-1)`), dbReq(`create table itm.${c} (id char(11), s varchar(255), n varchar(255), u varchar(255)[], t smallint[], v text[], ico varchar(255), primary key(id))`)]);
+			await dbReq('commit'); res(re); //End transaction
+			if(t) await tCat();
+		} catch(e) {await dbReq('rollback');throw e}*/
+	}
+}
+
+
+//function uReq(q) {return dbReq(q,1).then(r => {if(r.rowCount<1) throw "Update Failed"})}
+//function dbReq(q,nr) {log(chalk.cyan(q)),q=DB.query(q);return nr?q:q.then(r => r.rows)}
 function res(re,r,e) {
-	if(re.pn == '/up') { //Log to file
+	/*if(re.pn == '/up') { //Log to file
 		let s=`[${date()}] ${re.un||"Anonymous"} Update `+re.qr;
 		if(e) s+=" Failed: "+e;
 		else if(re.ld) s+=' '+(Array.isArray(re.ld)?'['+re.ld.join(', ')+']':JSON.stringify(re.ld));
 		fs.writeFile("db.log",s+'\n',{flag:'a'},e=>{if(e) msg(chalk.red(e.stack))});
-	}
+	}*/
 	if(typeof r=='object') r=JSON.stringify(r);
-	let hd; if(e) {
-		log(chalk.red(e.stack||e)); if(e.toString().startsWith('Expired'))
-			hd=['Set-Cookie','dbtkn=0;Max-Age=0','Set-Cookie','dbusr=0;Max-Age=0'];
-	} else log(chalk.dim(r?`(${r.length}) `+
-		(r.length>MaxLogLen?r.substr(0,MaxLogLen)+'...':r):"Done"));
+	let hd;
+	if(e) {
+		print(chalk.red(e.stack||e));
+		if(e.toString().startsWith('Expired')) hd=['Set-Cookie','dbtkn=0;Max-Age=0',
+			'Set-Cookie','dbusr=0;Max-Age=0'];
+	} else print(chalk.dim(r!==1?`(${r.length}) `+
+		(r.length>MaxLogLen?r.slice(0,MaxLogLen)+'...':r):"Done"));
 	re.writeHead(e?500:200,hd), re.end(e?e.toString():(r||0));
 }
-
+/*
 function rqData(rq) {
 	return new Promise(r => {
 		let b=[]; rq.on('data',c => b.push(c));
@@ -296,10 +385,16 @@ async function getAuth(c) {
 	t.us=t.d.FirstName.substr(0,1)+t.d.LastName.substr(0,1);
 	setTimeout(() => {delete Tkn[k];log("User Exp",t.n)}, UExp*1000);
 	Tkn[k]=t; return k;
+}*/
+
+//============================================== Support ==============================================
+
+function msg() {
+	let d=utils.formatDate(new Date(), LogDateFmt);
+	Array.prototype.splice.call(arguments,0,0,chalk.green(`[${d}]`));
+	print(...arguments);
 }
-
-//============================================== Helper Functions ==============================================
-
+/*
 function httpsReq(uri, mt, hdr, rb) {
 	return new Promise((res,rej) => {
 		let dat='',tt,re,rq=https.request(uri, {method:mt,headers:hdr}, (r) => {
@@ -321,55 +416,23 @@ function runCmd(cmd) {
 	}));
 }
 
-//From Utils.js
-Array.prototype.each = function(fn,st,en) {
-	let i=st||0,l=this.length,r; if(en) l=en<0?l-en:en;
-	for(; i<l; i++) if((r=fn(this[i],i,l))==='!') this.splice(i--,1),l--; else if(r!=null) return r;
-}
-
-//From Utils.js
-function fromQuery(str) {
-	if(str.startsWith('?')) str=str.substr(1);
-	function parse(params, pairs) {
-		const pair=pairs[0], spl=pair.indexOf('='),
-		key=decodeURIComponent(pair.substr(0,spl)),
-		value=decodeURIComponent(pair.substr(spl+1));
-		if(params[key] == null) params[key] = value;
-		else if(typeof params[key] == 'array') params[key].push(value);
-		else params[key] = [params[key],value];
-		return pairs.length == 1 ? params : parse(params, pairs.slice(1));
-	} return str.length == 0 ? {} : parse({}, str.split('&'));
-}
-
-//From Utils.js
-function getCookie(cl,n) {
-	let n2=' '+n; if(!cl) return null; cl=cl.split(';');
-	for(let i=0,l=cl.length,c,e,s; i<l; i++) {
-		c=cl[i], e=c.indexOf('='); s=c.substr(0,e);
-		if(s==n || s==n2) return decodeURIComponent(c.substr(e+1));
-	}
-}
-
 function ext(s) {
 	let n=s.lastIndexOf('.'), d=n==-1;
 	return {f:d?s:s.substr(0,n),e:d?'':s.substr(n)};
 }
+*/
+//============================================== Main ==============================================
 
-const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-function date() {
-	let d=new Date(), h=d.getHours(), m=d.getMinutes(),
-	s=d.getSeconds(), a=h; if(h==0) h=12; if(h>12) h-=12;
-	let t=(h>9?h:'0'+h)+':'+(m>9?m:'0'+m)+':'+(s>9?s:'0'+s)+(a<12?' AM':' PM'),
-	dt=MONTHS[d.getMonth()]+' '+d.getDate(); return dt+' '+t;
-}
+await begin();
 
-function runInput() {
-	log("Type 'q' to quit.");
-	process.stdin.resume(); process.stdin.setEncoding('utf8');
-	process.stdin.on('data', cmd => {
-		for(let s; (s=cmd.search(/[\n\r]/)) != -1;) cmd=cmd.substring(0,s);
-		if(cmd == 'exit' || cmd == 'q') {
-			log(chalk.magenta("Exiting...")); process.exit();
-		}
-	});
-}
+//TODO TEMP
+print("Type 'q' to quit.");
+process.stdin.resume();
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', async cmd => {
+	cmd=cmd.replace(/[\n\r].*$/,'');
+	try {
+		if(cmd == 'exit' || cmd == 'q') print(chalk.magenta("Exiting...")),process.exit();
+		else print('->',await dbCmd(cmd.split(' ')));
+	} catch(e) {print('->',e)}
+});
