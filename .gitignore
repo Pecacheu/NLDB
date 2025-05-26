@@ -1,7 +1,4 @@
 node_modules
 config.json
 uuid
-perms.json
-db.log
-nldb-bak.sql
 web/u

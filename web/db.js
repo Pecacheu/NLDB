@@ -1,47 +1,74 @@
-//NLDB ©2023 Pecacheu. GNU GPL v3.0
+//NLDB, Pecacheu 2025. GNU GPL v3
 'use strict';
-let Usr, Itm, Tbl, Cat, Edit, EditDone, Menu, DB;
-const log=console.log, SMsgDel=3000, SErrDel=8000,
+
+let DB, TH, LScr, Usr, Dat/*Itm, Tbl, Cat, Edit, EditDone, Menu,*/;
+/*const log=console.log, SMsgDel=3000, SErrDel=8000,
 Types=['text','num','date','dt','email','tel','range','cb','sel','selm','fl','fi','sc'],
 Img=['.png','.jpg','.jpeg','.svg','.gif','.heic'], TBD=["Item ID","Sub-Category","Name"],
 TCU=/_/g, TCT=/^\s+|\s+$|:/g, TCS=/(?=[^a-zA-Z][a-zA-Z])/g, FN=/[^\w.]/g,
-DbgSty={lineBreak:'anywhere',font:'12pt monospace',userSelect:'text'};
+DbgSty={lineBreak:'anywhere',font:'12pt monospace',userSelect:'text'};*/
 
-window.onload = () => {
-	DB=document.body; nAdd.onclick=addMenu.wrap();
-	nSave.title="Save", nSave.onclick=dbSave;
+//============================================== UI & Nav ==============================================
+
+onload=() => {
+	DB=document.body;
+	DB.mt=document.querySelector('meta[name=theme-color]');
+	MENU.bs=new bootstrap.Modal(MENU), OC.bs=new bootstrap.Offcanvas(OC);
+	MENU.addEventListener('hidden.bs.modal', () => MB.textContent='');
+	setTheme(Number(utils.getCookie('t')));
+
+	/*//Disco Mode
+	let hue=0;
+	setInterval(() => {
+		DB.style.setProperty('--h1', hue);
+		DB.style.setProperty('--h2', hue+180);
+		DB.mt.content=DB.tc=getComputedStyle(DB).getPropertyValue('--hdr-bg');
+		if((hue+=1) >= 360) hue -= 360;
+	}, 50);*/
+
+	/*nAdd.onclick=addMenu.wrap();
+	nSave.onclick=dbSave;
 	nUsr.onclick = () => {
 		if(Usr) utils.remCookie('dbtkn'),utils.remCookie('dbusr'),utils.onNav();
 		else location='/login'+location.search;
-	}
-	nBack.onclick = async () => {
-		if(Edit||Itm&&Itm.dty) {
+	}*/
+
+	//Header
+	HSB.onclick=searchMenu;
+	HMB.onclick=userMenu;
+	BACK.onclick=async () => {
+		/*if(Edit||Itm&&Itm.dty) {
 			Itm.dty=0, cont.textContent='', setEdit(0);
 			if(Itm.id) await itemViewDraw(); else catViewDraw();
 			fAlign();
-		} else if(history.state=='NLDB') utils.goBack();
+		} else */if(history.state==='NLDB') utils.goBack();
 		else go('/');
 	}
-	nMenu.title="Table View", nMenu.onclick = () => go('?t:'+Tbl);
-	nEdit.onclick = () => Tbl?go('?c:'+Tbl):setEdit(!Edit);
-	if(!utils.mobile) utils.addClass('menu',{overflow:'hidden !important'});
-	uVer.textContent=utils.VER;
+	//Menu
+	O_TH.onclick=() => {setTheme(TH?0:1,1),userMenu()}
+	O_LI.onclick=() => location.href='/login';
+	O_LO.onclick=() => dbGet('lo').then(() => {go('/'),userMenu()}).catch(err);
+	UV.textContent=utils.VER;
 }
-function setEdit(e,h,a) {
-	if(nSave.SV) return;
-	let d=Itm&&Itm.dty; Edit=e, nBack.src='r/'+(e||d?'exit':'back')+'.svg',
-	nEdit.src='r/'+(e?'done':'edit')+'.svg', nAdd.src='r/'+(e||!Itm?'add':'qr')+'.svg';
-	setAS(document,e); if(Menu) Menu.rem(); if(h!=null) nEdit.hidden=h||!Usr;
-	if(a!=null) nAdd.hidden=a; else if(Itm) nAdd.hidden=(Itm&&!Itm.id&&!e);
-	nEdit.title=e?"Done":"Edit", nBack.title=e||d?"Cancel":"Back",
-	nAdd.title=e||!Itm?"Add":"Create QR Code";
-	nBack.hidden=0, nMenu.hidden=1, nSave.hidden=!(e||d);
+
+function setTheme(t,c) {
+	if(c) utils.setCookie('t',t);
+	DB.setAttribute('data-bs-theme',t?'light':'dark');
+	DB.mt.content=DB.tc=getComputedStyle(DB).getPropertyValue('--hdr-bg');
+	TH=t;
 }
-window.onresize = () => {
-	hdr.style.visibility=(hdr.boundingRect.left < 190)?'hidden':null;
-	if(Itm) fAlign();
+
+onresize=() => {
+	//hdr.style.visibility=(hdr.boundingRect.left < 190)?'hidden':null;
+	//if(Itm) fAlign();
 }
-window.onkeydown = e => {
+onscroll=() => {
+	let h=scrollY-LScr > 0;
+	HDR.classList.toggle('hide',h);
+	FTR.classList.toggle('hide',h);
+	LScr=scrollY;
+}
+/*onkeydown=e => {
 	if(e.key == 'Home') return go('/');
 	if(Usr) { //User-only commands
 		if(e.key == 'ContextMenu') return setEdit(!Edit);
@@ -52,48 +79,64 @@ window.onkeydown = e => {
 	if(EditDone) {
 		if(e.key == 'Enter') EditDone(1); else if(e.key == 'Escape') EditDone();
 	} else if(e.key == 'Escape' && !nBack.hidden) nBack.onclick();
-}
+}*/
+
+//onbeforeunload = () => Edit||Itm&&Itm.dty?"Are you sure?":null;
 function go(p) {utils.go(p,'NLDB')}
-window.onbeforeunload = () => Edit||Itm&&Itm.dty?"Are you sure?":null;
-utils.onNav = () => {
-	let p,i=location.search.substr(1);
-	if(Edit||Itm&&Itm.dty) {
-		if(i!=Itm.uri) {
-			alert("You haven't saved your changes! Please press SAVE or Cancel.");
-			go('?'+Itm.uri);
+
+utils.onNav = async () => {
+	let i=location.search.slice(1);
+	/*if(Edit||Dat&&Dat.dty) {
+		if(i!==Dat.uri) {
+			alert("You haven't saved your changes! Please press SAVE or Cancel."); //TODO Replace alert with BS dialog box
+			go('?'+Dat.uri);
 		}
 		return;
-	}
-	//Loader:
-	let ls=load.style, ts=load.firstChild.style,
-	t=setTimeout(() => ts.animation='lr .8s ease-in infinite', 200);
+	}*/
+	//Loader
+	DB.removeAttribute('load');
+	let ls=LOAD.style, ts=LOAD.firstChild.style, t=setTimeout(() => {
+		ts.animation='lr .8s ease-in infinite', DB.mt.content='#000';
+	},200);
 	ls.display=null, ls.opacity=1;
-	//View Render:
-	Usr=utils.getCookie('dbusr'), nUsr.className=Usr?'user':null,
-	nUsr.lastChild.textContent=Usr||'';
-	log('NAV',i); if(i.startsWith('l:')) p=listView(i.substr(2));
-	else if(i.startsWith('t:')) p=tableView(i.substr(2));
-	else if(i.startsWith('c:')) p=catView(i.substr(2));
-	else if(i.startsWith('s:')) p=catView(i.substr(2),1);
-	else if(i) p=itemView(i); else p=indexView();
-	p.then(onresize).catch(e => {console.error(e),cont.innerHTML=e}).finally(() => {
-		if(Itm) Itm.uri=i; ls.opacity=0, ts.animation=null; clearTimeout(t);
-		setTimeout(() => ls.display='none', 220);
-	});
+	//Header
+	BACK.hidden=!i;
+	Usr=utils.getCookie('u');
+	HMB.className=Usr?'user':null, HMB.lastChild.textContent=Usr||'';
+	//Draw View
+	CONT.textContent='';
+	try {
+		/*if(i.startsWith('l:')) await listView(i.slice(2));
+		else if(i.startsWith('t:')) await tableView(i.slice(2));
+		else if(i.startsWith('c:')) await catView(i.slice(2));
+		else if(i.startsWith('s:')) await catView(i.slice(2),1);
+		else if(i) await itemView(i);*/
+		if(i.startsWith('pl:')) await plView(i.slice(3));
+		else await catView();
+		onresize();
+	} catch(e) {
+		console.error(e);
+		CONT.innerHTML=HtmlSanitizer.SanitizeHtml(`<span style='color:red'>${e}</span>`);
+	} finally {
+		clearTimeout(t); if(Dat) Dat.uri=i; DB.mt.content=DB.tc;
+		ls.opacity=0, ts.animation=null, ls.zIndex=980;
+		setTimeout(() => ls.display='none',220);
+		DB.setAttribute('load','');
+	}
 }
 
-//============================================== Database ==============================================
+/*function setEdit(e,h,a) {
+	if(nSave.SV) return;
+	let d=Itm&&Itm.dty; Edit=e, nBack.src='r/'+(e||d?'exit':'back')+'.svg',
+	nEdit.src='r/'+(e?'done':'edit')+'.svg', nAdd.src='r/'+(e||!Itm?'add':'qr')+'.svg';
+	setAS(document,e); if(Menu) Menu.rem(); if(h!=null) nEdit.hidden=h||!Usr;
+	if(a!=null) nAdd.hidden=a; else if(Itm) nAdd.hidden=(Itm&&!Itm.id&&!e);
+	nEdit.title=e?"Done":"Edit", nBack.title=e||d?"Cancel":"Back",
+	nAdd.title=e||!Itm?"Add":"Create QR Code";
+	nBack.hidden=0, nMenu.hidden=1, nSave.hidden=!(e||d);
+}*/
 
-function getUri(uri,es,b) {
-	return new Promise((re,rj) => utils.loadAjax(uri,
-		(e,r) => {if(e) rj("<b>"+(es?es+' ':'')+"Error "+e+":</b> "+r); else re(r)},b?'POST':null,b));
-}
-function dbPost(t,d,b) {log(t,b?d.size:d);return getUri('up?'+t,'Upload',b?d:JSON.stringify(d))}
-async function dbReq() {
-	let a=[]; Array.prototype.each.call(arguments,(n,i) => {a[i]=encodeURIComponent(n)});
-	log(a),a=await getUri('db?'+a.join(';'),'DB'); return a?JSON.parse(a):0;
-}
-
+/*
 function iTyp(t) {let n=Types.indexOf(t);if(n==-1)throw "No Type "+t;return n}
 async function dbSave() {
 	if(this.SV) return; Itm.dty=0,setEdit(0); this.SV=1;
@@ -145,16 +188,27 @@ async function newCat(c,s) {
 	try {await dbReq(s?'ns':'nc',c),go((s?'?s:':'?c:')+c)}
 	catch(e) {console.error(e),cont.innerHTML=e}
 }
+*/
+//============================================== Views ==============================================
 
-//============================================== View Load ==============================================
-
-async function indexView() {
-	Itm=Tbl=0, search.style.display=null, cont.textContent='',
-	cont.style='', document.title=hdr.textContent="NovaLabs Inventory";
-	setEdit(0,1,0); nBack.hidden=1; Cat=await dbReq('cl'); log("Cat",Cat);
-	Cat.each(c => idxItem({n:tCase(c.n),c:'Category',id:'l:'+c.n,ico:'r/upload.svg'}));
+async function catView() {
+	/*Itm=Tbl=0, */document.title="NLDB";
+	//setEdit(0,1,0);
+	Dat=await dbGet('cl');
+	for(let d of Dat) mkCat(d);
+	//Dat.each(c => idxItem({n:tCase(c.n),c:'Category',id:'l:'+c.n,ico:'r/upload.svg'}));
+}
+function mkCat(d) {
+	let e=utils.mkDiv(CONT,'cat'), a=utils.mkEl('a',e);
+	mkLink(a,`?pl:${d._id}`), a.textContent=d.n;
 }
 
+async function plView(cid) {
+	Dat=await dbGet('pl',cid);
+	for(let d of Dat) mkCat(d);
+}
+
+/*
 async function listView(c) {
 	Itm=0,Tbl=c, search.style.display=null, cont.textContent='',
 	cont.style='', document.title=hdr.textContent="Cat: "+tCase(c);
@@ -220,7 +274,7 @@ function idxItem(e) {
 		n=0, m=r.length; Cat[i]=t; log("Check",t,r.length);
 			for(; n<m; n++) cont.innerHTML += r[n]+"<br>"; //drawItem(r[n]);
 	}*
-}*/
+}*
 
 async function itemViewDraw() {
 	Itm.cf=[], Itm.sf=[], Itm.uf=[];
@@ -269,9 +323,45 @@ function cvEdit(l) {
 }
 
 function itmEdit() {fAlign(); if(!Itm.id) cvEdit()}
+*/
+//============================================== Menus ==============================================
 
-//============================================== Menu Render ==============================================
+const S_TABS=["All", "Parts", "Inventory", "Locations", "People"];
 
+function mkMenu(name, btns) {
+	M_T.textContent=name, M_H.hidden=name==null, M_F.hidden=!btns;
+	MENU.bs._config.backdrop=btns?'static':true;
+}
+
+function searchMenu() {
+	mkMenu();
+	let s=utils.mkEl('input',MB,'form-control');
+	s.placeholder="Search for anything...";
+	//Tabs
+	let tl=utils.mkEl('ul',MB,'nav nav-underline');
+	S_TABS.forEach((t,i) => {
+		t=utils.mkEl('a',utils.mkEl('li',tl,'nav-item'),'nav-link'+(i?'':' active'),null,t);
+		t.href='#', t.onclick=sTab;
+	});
+	MENU.bs.show();
+	setTimeout(() => s.focus(),200);
+}
+function sTab(e) {
+	e.preventDefault();
+	for(let c of this.parentElement.parentElement.children)
+		c.firstChild.classList.remove('active');
+	this.classList.add('active');
+}
+
+function userMenu() {
+	if(Usr) O_USR.textContent=`Logged in as ${Usr}`;
+	O_LI.hidden=!(O_USR.hidden=O_LO.hidden=!Usr);
+	O_TH.innerHTML=`<i class=bi>&#x${TH?"F497;</i><span>Dark Mode":
+		"F5A2;</i><span>Light Mode"}</span>`;
+	OC.bs.show();
+}
+
+/*
 function addMenu(e) {
 	if(Menu) Menu.rem(); let m=utils.mkDiv(null,'menu');
 	m.s1=utils.mkEl('span',m), m.s2=utils.mkEl('span',m), m.s3=utils.mkEl('span',m),
@@ -577,8 +667,47 @@ async function getUUIDDate(u) {
 function toDateBox(d,t) {
 	d=new Date(d-new Date().getTimezoneOffset()*60000).toISOString();
 	return d.substr(0,d.lastIndexOf(t?':':'T'));
+}*/
+
+//============================================== Database ==============================================
+
+const ES={db:"DB", up:"Upload"}, _eRX = /[^\w <>,.?/\\!@#$^*()|_+={}\[\]-]/g;
+function _enc(x) {return '%'+x.charCodeAt(0).toString(16).toUpperCase()}
+function encodePart(s) {return s.replace(_eRX, _enc)}
+
+async function getUri(uri,d,b) {
+	let u,r={mode:'same-origin', cache:'no-store'};
+	if(b) r.method="POST", r.body=d, u=uri; else u=uri+'?'+d;
+	try {r=await fetch(u,new Request(r)), b=await r.text()}
+	catch(e) {
+		e=`${e}`, u=e.indexOf(':');
+		throw `<b>${ES[uri]} ${e.slice(0,u+1)}</b> ${e.slice(u+2)} @ <i>${d}</i>`;
+	}
+	if(r.status!==200) throw `<b>${ES[uri]} Code ${r.status}:</b> ${b} @ <i>${d}</i>`;
+	return b;
+}
+async function _DBQ(ar,b) {
+	let a=[],f=b?encodePart:encodeURIComponent;
+	Array.prototype.each.call(ar,(n,i) => {a[i]=f(n)});
+	f=await getUri('db',a.join('&')), f=f==='1'||JSON.parse(f);
+	console.debug(a,f); return f;
+}
+function dbGet() {return _DBQ(arguments)}
+function dbPost() {return _DBQ(arguments,1)}
+
+//============================================== Support ==============================================
+
+function err(e) {
+	console.error(e);
+	mkMenu("Error");
+	MB.innerHTML=HtmlSanitizer.SanitizeHtml(`<span style='color:red'>${e}</span>`);
+	MENU.bs.show();
 }
 
+function mkLink(l,u) {l.href=u,l.onclick=_lClk}
+function _lClk(e) {e.preventDefault(),console.log(this.href),go(this.href)}
+
+/*
 //============================================== Grabable ==============================================
 
 function makeGrabable(el,btn,down,up) {
@@ -669,7 +798,7 @@ ErrorTextL="<i>Error:</i> ", ErrorTextR="!<br><strong>Try Again?</strong>";
 
 /*Callbacks:
 onFileLoad - Called once per file. An error can be returned as a string
-onLoadDone - Called once all files in a drop are processed. An error can be returned as a string*/
+onLoadDone - Called once all files in a drop are processed. An error can be returned as a string*
 
 //HTML5 Upload API v1.3 by Pecacheu
 function Uploader(extList, par, maxFiles, doneMsg) {
@@ -734,4 +863,4 @@ function prCode() {
 	let u=Menu.qr.toDataURL();
 	printJS({printable:u,type:'image',imageStyle:'width:3in;border:1px solid #000'});
 	URL.revokeObjectURL(u);
-}
+}*/
