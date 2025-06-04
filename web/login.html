@@ -1,0 +1,28 @@
+<!-- NLDB, Pecacheu 2025. GNU GPL v3 -->
+<html><head>
+<title>NLDB</title>
+<meta charset=utf8>
+<link rel=icon type=image/png href=r/favicon.png>
+<meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,shrink-to-fit=no,interactive-widget=resizes-content">
+<meta name=theme-color content="#000">
+<link rel=stylesheet href=r/bootstrap.css>
+<link rel=stylesheet href=r/style.css>
+<style>
+body { padding:10px !important; }
+.form-control { margin-block-end:1em; }
+h1 { text-align:center; margin-block-end:.5em; }
+p { color:red; margin:1rem 0; }
+form { max-width:500px; text-align:center; margin:auto; }
+button:not(:last-child) { margin-right:10px; }
+</style>
+<script src=utils.js></script>
+<script src=db.js></script>
+</head><body>
+<h1>Login to NLDB</h1>
+<form>
+<input id=USR type=email class=form-control placeholder=Email autocomplete=email>
+<input id=PWD type=password class=form-control placeholder=Password autocomplete=current-password>
+<button id=BL class="btn btn-success">Login</button><button id=BS class="btn btn-secondary">Sign Up</button>
+<p id=ERR></p>
+</form>
+</body></html>
