@@ -1,5 +1,5 @@
 //NLDB, Pecacheu 2025. GNU GPL v3
-const VER='v2.0 a3';
+const VER='v2.0 Beta 1';
 
 import fs from 'fs/promises';
 import path from 'path';
@@ -8,14 +8,15 @@ import https from 'https';
 import chalk from 'chalk';
 import mdb from 'mongodb';
 import ar2 from 'argon2';
+import sharp from 'sharp';
 import router from 'raiutils/router';
 import schema from 'raiutils/schema';
 import UUID from 'raiutils/uuid';
 import 'raiutils';
 
-const TknExpSec=24*3600,
+const TknExpSec=24*3600, //24h
 TknExp=TknExpSec*1000,
-TknCheckInt=3600000,
+TknCheckInt=3600000, //1h
 MaxUpload=10000000, //10MB
 NameMax=1000,
 DataMax=10000,
@@ -27,7 +28,10 @@ LogDateFmt={sec:true, suf:false, year:false, df:true},
 Conf=JSON.parse(await fs.readFile('config.json')),
 SrvOpt=Conf.sslKey?{key:await fs.readFile(Conf.sslKey), cert:await fs.readFile(Conf.sslCert)}:null,
 print=console.log, Tkn={};
-let DB, Cat, CatID, CatMagic, Lock,
+
+//Default Workspace Config
+let WS={_id:0, c1:0xF25D26, c2:0x6ABF40},
+Ico, DB, Cat, CatID, CatMagic, Lock,
 CID, RDU, OAuthUri, TknUri, UsrInfoUri;
 
 if(Conf.debug>1) router.debug=1;
@@ -43,18 +47,17 @@ if(Conf.auth === 'wildapricot') {
 
 async function begin() {
 	const ips=utils.getIPs(), [sysOS, arch, cpu]=utils.getOS();
-	print("IP:",ips,`OS: ${sysOS}, ${arch}\nCPU: ${cpu}\n`);
+	print("IP:",ips,`OS: ${sysOS}, ${arch}\nCPU: ${cpu}\n\n`+chalk.yellow(`NLDB ${VER}`));
 
-	print(chalk.yellow(`NLDB ${VER}`));
-	if(sysOS !== 'Linux') {
-		print(chalk.yellow(chalk.underline("Warning: Thumbnail generation via ImageMagick only supported on Linux")));
-	}
-	//TODO else setup ImageMagick stuff
+	print("Loading icon...");
+	await sharp(Root+"/icon128.png").metadata(); //Test Sharp
+	await fs.stat(Path+"/icon128.png").catch(() => {Ico=1});
 
 	print("Loading database...");
-	DB = new mdb.MongoClient(Conf.dbUri).db('nldb');
-	Cat = DB.collection('cat'), DB.u = DB.collection('usr');
-	await loadCats();
+	DB = new mdb.MongoClient(Conf.dbUri).db('nldb'), Cat = DB.collection('cat');
+	DB.u = DB.collection('usr'), DB.w = DB.collection('ws');
+	WS=(await DB.w.findOne()) || (await DB.w.insertOne(WS),WS);
+	loadWS(), await loadCats();
 	for await(let u of DB.u.find()) {
 		let kl=u.k; delete u.k;
 		for(let k of kl) Tkn[k]=u;
@@ -76,32 +79,45 @@ async function begin() {
 
 //============================================== Requests ==============================================
 
+const SEC_CK=";Secure";
+
 async function onReq(req, res) {
 	let uri=new URL(req.url,'http://a'), pn=res.pn=uri.pathname;
-	if(pn === '/db') { //DB Cmd
+	if(pn === '/db') {
 		let q=(req.method==='POST')?(await reqData(req)).toString('utf8'):uri.search.slice(1);
 		if(q.length < 1) throw "Bad Args";
 		q=q.split('&'); q.forEach((r,i) => q[i]=decodeURIComponent(r));
 		return await dbCmd(q,req,res);
 	} else if(pn === '/login') {
-		//if(!SrvOpt) throw "Insecure Connection";
+		if(!SrvOpt) throw "Insecure Connection";
 		if(Conf.auth === 'wildapricot') {
 			res.writeHead(307,'',{location:OAuthUri});
 			res.end(); return 2;
 		} else if(Conf.auth === 'builtin') return;
 		throw "No Login System";
 	} else if(pn === '/auth') {
-		//TODO Rate limit auth endpoint
-		//TODO Use temp cookie or similar instead of query param for password, will help avoid logging it
-		//if(!SrvOpt) throw "Insecure Connection";
-		let q=utils.fromQuery(uri.search), qc={...q}, c=';Secure;Max-Age='+TknExpSec;
+		//TODO Rate limit auth endpoint to 1 per 2s
+		if(!SrvOpt) throw "Insecure Connection";
+		let q=utils.fromQuery(uri.search), qc={...q};
 		delete qc.p;
 		msg("[AUTH]", req.socket.remoteAddress, qc);
 		let k=await getAuth(req,q), t=Tkn[k];
 		msg(chalk.yellow(t.e), "got new token", chalk.magenta(k));
-		res.writeHead(307,'',{location:'/', 'set-cookie':['k='+k+c,'u='+t.ns+c]});
+		res.writeHead(307, '', {location:'/', 'set-cookie':
+			[`k=${k};Max-Age=`+TknExpSec+SEC_CK, "u="+JSON.stringify(t)+SEC_CK]});
 		res.end(); return 2;
+	} else if(pn === '/up') {
+		//TODO Only allow authenticated user, rate limit to 10 per 1s
+		//let q=uri.search, ico=q==='icon', fn=ico?'icon.png':await UUID.genUUID();
+		//Path+'/u/'+fn;
+		//u=await UUID.genUUID()
+		//Image magick stuff for icon to generate 128
+		//Convert to png
+	} else if(Ico && (pn === '/icon.png' || pn === '/icon128.png')) {
+		await router.serve(Root+pn, req, res);
+		return 2;
 	}
+	if(pn === '/' || pn === '/login') res.setHeader('set-cookie', WS._c);
 }
 
 function reqData(req) {
@@ -126,6 +142,11 @@ async function dbLock(l) {
 	Lock={l:l}, Lock.p=new Promise(r=>Lock.r=r);
 }
 function dbUnlock(l) {if(Lock && Lock.l===l) Lock.r(),Lock=0}
+
+function loadWS() {
+	WS._c=utils.setCookie('w', [VER,
+		WS.c1.toString(16), WS.c2.toString(16)].join('~'), -1);
+}
 
 async function loadCats() {
 	CatID=CatMagic=[];
@@ -197,6 +218,13 @@ function dbSet(d) {
 }
 
 const CVFmt={t:'str|int',min:[1,null]},
+EmailFmt="[a-z0-9.!#$%&'`*+/=^_{}|~-]+@((\\.)?[a-zA-Z0-9-])+",
+UsrDataFmt={
+	e:{t:'str',f:EmailFmt,max:NameMax},
+	n:{t:'str',min:2,max:NameMax},
+	c1:{t:'int',min:0,max:0xFFFFFF},
+	c2:{t:'int',min:0,max:0xFFFFFF}
+},
 CatDataFmt={
 	n:{t:'str',min:1,max:NameMax},
 	h:{t:'bool',req:false},
@@ -227,13 +255,23 @@ ItmDataFmt={
 
 async function dbCmd(q,req,res) {
 	let k=req&&utils.getCookie('k',req.headers.cookie||''), t=k&&Tkn[k], id,c,d,j,n;
-	msg("[CMD]", q, k?chalk.yellow(t.e):'');
+	msg("[CMD]", q, t?chalk.yellow(t.e):'');
+	if(k && !t) return 3;
 	switch(q[0]) {
-	//---- User ----
+	//---- Users & Settings ----
 	case 'lo': //Log Out
-		try {await delTkn(k)} catch(e) {err(e)}
-		res.writeHead(200,'',{'set-cookie':['k=0;Max-Age=0','u=0;Max-Age=0']});
+		await delTkn(k).catch(err);
+		res.writeHead(200,'',{'set-cookie':"k=;Max-Age=0"});
 		res.end(); return 2;
+	case 'uu': //Update User [{e:email, n:name}]
+		if(!t) throw "Not logged in";
+		if(q.length !== 1) throw "Bad Args";
+		asType(q,2,T_OBJ,"Data",DataMax);
+		j=q[2], j.e=j.e.trim().toLowerCase();
+		schema.checkSchema(j, UsrDataFmt, 1);
+		d=await DB.u.updateOne({_id:t._id}, dbSet(j));
+		if(d.modifiedCount !== 1) return 3;
+		return 1;
 	//---- Read ----
 	case 'cl': //List Cats
 		c=utils.copy(CatID,2);
@@ -315,20 +353,21 @@ async function dbCmd(q,req,res) {
 		dbLog(c, LOG_LN, id, t, j.c, {n:j.n});
 		return 1;
 	//---- Update ----
-	case 'cu': //Update Cat [id, {n:name, h:trackHistory, v:catVars}]
+	case 'cu': //Cat Update [id, {n:name, h:trackHistory, v:catVars}]
 		if(q.length !== 3) throw "Bad Args";
 		if(!(c=CatID[q[1]])) throw "Bad ID";
 		asType(q,2,T_OBJ,"Data",DataMax);
-		schema.checkSchema(j=q[2], CatDataFmt);
+		schema.checkSchema(j=q[2], CatDataFmt, 1);
 		d=await Cat.updateOne({_id:q[1]}, dbSet(j));
 		if(d.modifiedCount !== 1) {await loadCats(); throw "Cat not found"}
-		c.n=j.n, c.h=j.h;
+		if(j.n!=null) c.n=j.n;
+		if(j.h!=null) c.h=j.h;
 		return 1;
 	case 'pu': //Part Update [id, {n:name, d:desc, m:mfg, s:subId, c:cmnt, cv:catVars, sv:subVars, v:vars}]
 		if(q.length !== 3) throw "Bad Args";
 		c=catFromID(q[1]);
 		asType(q,2,T_OBJ,"Data",DataMax);
-		schema.checkSchema(j=q[2], ItmDataFmt);
+		schema.checkSchema(j=q[2], ItmDataFmt, 1);
 		d=await getTbl(q,c).updateOne({_id:q[1]}, dbSet(j));
 		if(d.modifiedCount !== 1) throw "Part not found";
 		//TODO Update name in history log if name changed?
@@ -384,7 +423,10 @@ function endReq(res,r,e) {
 	}*/
 	if(e) err(e);
 	else if(r===2) return;
-	else {
+	else if(r===3) {
+		res.writeHead(410,'',{'set-cookie':"k=;Max-Age=0"});
+		return res.end("Expired Token");
+	} else {
 		let t=typeof r;
 		if(t==='object') r=JSON.stringify(r);
 		else if(t!=='string') r=r.toString();
@@ -411,8 +453,9 @@ async function tknExpLoop() {
 	let n=new Date(),tk=Object.keys(Tkn),k,d;
 	for(k of tk) {
 		d=new UUID(k.slice(0,UUID.LEN)).getDate();
-		print("Token for", chalk.yellow(Tkn[k].e), "issued", d, "AGE IS", n-d, "OF", TknExp); //TODO TEMP
-		if(n-d >= TknExp) await delTkn(k);
+		print("Token for", chalk.yellow(Tkn[k].e), "issued", d, "AGE IS", n-d, "OF", TknExp);
+		//TODO Update exp date based on last db cmd call
+		if(n-d >= TknExp) await delTkn(k).catch(err);
 	}
 }
 
@@ -421,17 +464,17 @@ async function genTkn() {
 	return u.toString()+r.toString('base64url');
 }
 async function delTkn(k) {
-	let t=Tkn[k]; if(!t) throw "Token Not Found";
-	delete Tkn[k];
+	let t=Tkn[k];
+	if(!t) throw "Token Not Found"; delete Tkn[k];
 	msg("Token", chalk.magenta(k), "for", chalk.yellow(t.e), "expired");
 	t=await DB.u.updateOne({_id:t._id}, {$pull:{k:k}});
 	if(t.modifiedCount !== 1) throw "User not found";
 }
 
-async function loginFail() {
+async function loginFail(e) {
 	//Random delay to prevent timing attacks
 	await utils.delay(utils.rand(500,3000));
-	throw "Incorrect email or password";
+	throw e||"Incorrect email or password";
 }
 
 async function getAuth(req,q) {
@@ -447,10 +490,11 @@ async function getAuth(req,q) {
 		if(!a || !(x>0) || !t.u) throw "Bad WA Token";
 		//WA User Data
 		d=JSON.parse(await httpReq(UsrInfoUri+t.u+'/contacts/me', 'GET', {authorization:"Bearer "+a}));
-		t.n=d.FirstName+' '+d.LastName, t.ns=d.FirstName.substr(0,1)+d.LastName.substr(0,1), t.e=d.Email;
+		t.e=d.Email, t.n=d.FirstName+d.LastName.charAt(0);
 		if(Conf.debug) print("WA Auth",d,t);
 	} else if(Conf.auth === 'builtin') {
 		if(!q.u || !q.p) throw "Bad Auth";
+		try {schema.checkSchema({e:q.u},UsrDataFmt,1)} catch(e) {throw "Bad Email"}
 		t={e:q.u, p:q.p}, b=1;
 	} else {
 		throw "No Login System";
@@ -462,23 +506,24 @@ async function getAuth(req,q) {
 	if(u) { //Login
 		let r={$push:{k:k}};
 		if(b) {
-			if(q.s) throw "Account already exists";
+			if(q.s) await loginFail("Account already exists");
 			if(!await ar2.verify(u.p, t.p)) await loginFail();
-		} else r.$set={n:u.n=t.n, ns:u.ns=t.ns};
+		}
 		r=await DB.u.updateOne({_id:u._id}, r);
 		if(r.modifiedCount !== 1) throw "Unknown error";
 	} else { //New User
 		if(b && !q.s) await loginFail();
 		let id=(await UUID.genUUID()).toString();
-		u={_id:id, e:t.e, k:[k]};
+		u={_id:id, e:t.e, c1:WS.c1, c2:WS.c2, k:[k]};
 		if(b) {
 			let n=t.e.slice(0,t.e.indexOf('@')), x=n.indexOf('.');
-			u.ns=(x===-1 ? n.slice(0,2) : n.charAt(0)+n.charAt(x+1)).toUpperCase();
+			u.n=n.charAt(0).toUpperCase()+(x!==-1 ? n.slice(1,x)+n.charAt(x+1).toUpperCase() : n.slice(1));
 			u.p=await ar2.hash(t.p, {hashLength:48});
-		} else u.n=t.n, u.ns=t.ns;
+		} else u.n=t.n;
 		await DB.u.insertOne(u);
 	}
-	delete u.k;
+	//Cache user info wo/ sensitive keys
+	delete u.k, delete u.p;
 	Tkn[k]=u;
 	dbUnlock(req);
 	return k;

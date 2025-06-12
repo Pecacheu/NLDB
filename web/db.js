@@ -1,7 +1,8 @@
 //NLDB, Pecacheu 2025. GNU GPL v3
 'use strict';
 
-let Usr, Dat, Edit, DB, TH, LScr, safeHTML;
+let Usr, Dat, Edit, DB, WS, LM, LScr, safeHTML;
+const R_UC=/[A-Z]/;
 
 //============================================== UI & Nav ==============================================
 
@@ -12,24 +13,49 @@ setInterval(() => {
 	DB.style.setProperty('--h2', hue+180);
 	DB.mt.content=DB.tc=getComputedStyle(DB).getPropertyValue('--hdr-bg');
 	if((hue+=1) >= 360) hue -= 360;
-}, 50);*/
+}, 50);
 
-onload=() => {
+--h1:16;
+--sl1:89%, 55%;
+--h2:100;*/
+
+onload=() => {try {
 	DB=document.body;
 	DB.mt=document.querySelector('meta[name=theme-color]');
-	setTheme(Number(utils.getCookie('t')));
-	//Login Page
-	if(!window.MENU) {
-		BL.onclick=BS.onclick=login;
-		return DB=utils.onNav=onscroll=onkeydown=null;
+	let lp=!('MENU' in window), ck=utils.getCookies();
+	//User
+	Usr=ck.u||localStorage.getItem('u');
+	if(!ck.k) logout();
+	else if(!lp && Usr) {
+		Usr=JSON.parse(Usr);
+		let n=Usr.n, x=n.slice(1).search(R_UC)+1;
+		Usr.ns=n.charAt(0)+(x?n.charAt(x):n.charAt(1).toUpperCase());
+		Usr.c1='#'+Usr.c1.toString(16), Usr.c2='#'+Usr.c2.toString(16);
+		if(ck.u) utils.remCookie('u'), localStorage.setItem('u',ck.u);
 	}
-	safeHTML=HtmlSanitizer.SanitizeHtml;
+	//Workspace
+	if(!(WS=ck.w)) throw "Failed to load workspace (Check your cookie settings)";
+	WS=WS.split('~');
+	if(!lp) NV.textContent=WS[0];
+	WS.c1='#'+WS[1], WS.c2='#'+WS[2];
+	//Theme
+	let h=Usr||WS, h1=getHSL(h.c1), h2=getHSL(h.c2);
+	DB.style.setProperty('--h1', h1[0]);
+	DB.style.setProperty('--sl1', `${h1[1]}%,${h1[2]}%`);
+	DB.style.setProperty('--h2', h2[0]);
+	setTheme(Number(localStorage.getItem('t')));
+	//Login Page
+	if(lp) {
+		BL.onclick=BS.onclick=login;
+		return DB=utils.onNav=onresize=onscroll=onkeydown=null;
+	}
 	//Header
+	safeHTML=HtmlSanitizer.SanitizeHtml;
 	HSB.onclick=searchMenu;
 	HMB.onclick=userMenu;
 	BACK.onclick=async () => {
 		if(Dat && (Edit || Dat.dty)) {
-			delete Dat.dty; setEdit(0); utils.onNav();
+			delete Dat.dty, setEdit(0), utils.onNav();
 		} else if(history.state==='NLDB') utils.goBack();
 		else go('/');
 	}
@@ -38,19 +64,25 @@ onload=() => {
 	MENU.bs=new bootstrap.Modal(MENU), OC.bs=new bootstrap.Offcanvas(OC);
 	MENU.addEventListener('hidden.bs.modal', () => {MB.textContent='',MENU.w=0});
 	O_CF.onclick=() => editor(DB._v, DB._i);
-	O_TH.onclick=() => {setTheme(TH?0:1,1),userMenu()}
+	O_TH.onclick=() => {setTheme(LM?0:1,1),userMenu()}
+	O_SE.onclick=() => editor('s');
 	O_LI.onclick=() => go('/login',1);
 	O_LO.onclick=() => {
-		if(!Edit) dbGet('lo').then(() => {go('/'),userMenu()}).catch(err);
+		if(!Edit) dbGet('lo').then(() => logout(2)).catch(err);
 	}
 	UV.textContent=utils.VER;
-}
+} catch(e) {
+	utils.onNav=null;
+	for(let c in utils.getCookies()) utils.remCookie(c);
+	if('localStorage' in window) localStorage.clear();
+	alert(e);
+}}
 
-function setTheme(t,c) {
-	if(c) utils.setCookie('t',t);
-	DB.setAttribute('data-bs-theme',t?'light':'dark');
+function setTheme(lm, upd) {
+	if(upd) localStorage.setItem('t',lm);
+	DB.setAttribute('data-bs-theme',lm?'light':'dark');
 	DB.mt.content=DB.tc=getComputedStyle(DB).getPropertyValue('--hdr-bg');
-	TH=t;
+	LM=lm;
 }
 async function login(e) {
 	e.preventDefault();
@@ -58,6 +90,7 @@ async function login(e) {
 	ERR.textContent='';
 	let d={u:USR.value, p:PWD.value};
 	if(this===BS) d.s=1; //This is BS!
+	ERR.innerHTML="Loading...";
 	try {
 		await getUri('/auth',utils.toQuery(d));
 		go('/',1);
@@ -66,34 +99,27 @@ async function login(e) {
 		ERR.innerHTML=e;
 	}
 }
+function logout(f) {
+	Usr=null; utils.remCookie('k');
+	localStorage.clear();
+	if(f===2) utils.onNav(),userMenu();
+	else if(f===1) utils.onNav(1);
+}
 
 //Touch Keyboard Detect
 if('visualViewport' in window) {
-	let TK,TO,LT,EL,SX,SY;
-	function rst(sh) {
-		EL=MENU.bs._isShown?MENU:DB, SX=EL.scrollLeft, SY=EL.scrollTop;
-		if(sh) TO=setTimeout(() => {EL.style.height=visualViewport.height,TO=0}, 200);
-	}
+	let TD;
 	visualViewport.onresize=e => {
-		if(TO) clearTimeout(TO);
-		let h=e.target.height; TK=(h*e.target.scale)/utils.h < .75;
-		if(TK) rst(1); else if(EL) EL.style.height='';
-	}
-	document.documentElement.ontouchstart=e => {
-		if(TK) LT=e.touches[0], rst();
+		let h=e.target.height, tk=(h*e.target.scale)/utils.h<.75;
+		TD=tk && MENU.bs._isShown && visualViewport.height >
+			MENU.firstChild.boundingRect.h+16;
 	}
 	document.documentElement.addEventListener('touchmove', e => {
-		if(TK) {
-			e.preventDefault(); let t;
-			if(LT && e.touches.length === 1 && (t=e.changedTouches[0])
-					.identifier === LT.identifier) {
-				SX += LT.screenX-t.screenX, SY += LT.screenY-t.screenY;
-				(MENU.bs._isShown?MENU:DB).scrollTo(SX, SY), LT=t;
-			}
-		}
+		if(TD) e.preventDefault();
 	}, {passive:false})
 }
 onresize=() => {
+	DB.classList.toggle('fixed',DB.innerRect.h+48 <= utils.h);
 	if(MENU.w) MENU.classList.toggle('mSnap',utils.w < MENU.w+56);
 }
 onscroll=() => {
@@ -116,7 +142,7 @@ onscroll=() => {
 }
 onbeforeunload=() => Edit||Itm&&Itm.dty?"Are you sure?":null;*/
 
-utils.onNav = async () => {
+utils.onNav = async e => {
 	let q=location.search.slice(1);
 	[DB._v, DB._i] = parseNav(DB._q=q);
 	//Loader
@@ -126,14 +152,14 @@ utils.onNav = async () => {
 	},200);
 	ls.display=null, ls.opacity=1;
 	//Header
-	Usr=utils.getCookie('u');
 	HMB.className=Usr?'user':'';
-	HMB.lastChild.textContent=Usr||'';
+	HMB.lastChild.textContent=Usr?Usr.ns:'';
 	O_SE.hidden=!Usr;
 	O_CF.hidden=!Usr || !DB._q;
 	setEdit(Edit), EDIT.hidden=!Usr;
 	//Draw View
 	CONT.textContent='';
+	if(e===1) return;
 	try {
 		/*if(i.startsWith('l:')) await listView(i.slice(2));
 		else if(i.startsWith('t:')) await tableView(i.slice(2));
@@ -152,7 +178,7 @@ utils.onNav = async () => {
 		setEdit(0), EDIT.hidden=1;
 		CONT.innerHTML=safeHTML(`<span style='color:red'>${e}</span>`);
 	} finally {
-		clearTimeout(t); DB.mt.content=DB.tc;
+		onresize(), clearTimeout(t); DB.mt.content=DB.tc;
 		ls.opacity=0, ts.animation=null, ls.zIndex=980;
 		setTimeout(() => ls.display='none',220);
 		DB.setAttribute('load','');
@@ -206,7 +232,11 @@ async function plView() {
 
 async function partView() {
 	Dat=await dbGet('p',DB._i);
-	CONT.textContent=JSON.stringify(Dat,null,'\t');
+	let c=utils.mkDiv(CONT,'pv');
+	utils.mkEl('h1',c).textContent=Dat.n;
+	if(Dat.m) utils.mkEl('h2',c).textContent=Dat.m;
+	if(Dat.d) utils.mkEl('p',c,null,null,safeHTML(Dat.d));
+	utils.mkEl('code',c).textContent=JSON.stringify(Dat,null,1);
 }
 
 //============================================== View Render ==============================================
@@ -225,7 +255,7 @@ function mkMenu(name, btns, width) {
 
 function searchMenu() {
 	mkMenu();
-	let s=mkInput(MB,"Search for anything...");
+	let s=mkInput(MB,"Search for anything...",I_TEXT);
 	//Tabs
 	let tl=utils.mkEl('ul',MB,'nav nav-underline');
 	S_TABS.forEach((t,i) => {
@@ -243,47 +273,91 @@ function sTab(e) {
 }
 
 function userMenu() {
-	if(Usr) O_USR.textContent=`Logged in as ${Usr}`;
+	if(Usr) O_USR.textContent=`Logged in as ${Usr.n}`;
 	O_LI.hidden=!(O_USR.hidden=O_LO.hidden=!Usr);
-	O_TH.innerHTML=`<i class=bi>&#x${TH?"F497;</i><span>Dark Mode":
+	O_TH.innerHTML=`<i class=bi>&#x${LM?"F497;</i><span>Dark Mode":
 		"F5A2;</i><span>Light Mode"}</span>`;
 	OC.bs.show();
 }
 
 async function editor(type, id) {try {
-	let d,f,i={};
+	let D,I={};
 	async function menu(t,tn) {
-		if(id) d=await dbGet(t,id);
-		mkMenu(id?"Editing "+d.n:"New "+tn,1,650);
-		f=utils.mkEl('table',MB,'fTbl');
+		if(id) D=await dbGet(t,id);
+		mkMenu(id?"Editing "+D.n:"New "+tn,1,650);
 	}
-	async function edit() {try {
-		let a=arguments;
-		if(d || a[0]!=='c') Array.prototype.splice.call(a,1,0,d?d._id:DB._i);
-		a[0]=a[0]+(d?'u':'n');
-		await dbPost(...a);
-		MENU.bs.hide();
-		utils.onNav();
-	} catch(e) {err(e)}}
+	function input() {
+		let x=D||1, a=arguments, k=Array.prototype.splice.call(a,0,1);
+		a[2]=D&&D[k]||a[2], a.length=3;
+		a=mkInput(MB, ...a);
+		if(k) (I[x]||(I[x]={}))[k]=a;
+		return a;
+	}
+	async function sync(f) {
+		M_BS.disabled=1;
+		await f().catch(err);
+		M_BS.disabled=0;
+	}
+	async function edit(t,d=D,nu) {
+		if(!M_BS.disabled) return sync(() => edit(t,d,nu));
+		let a=[t+(d?'u':'n')], nd={}, x=I[d||1], k,v,c;
+		if(d || t!=='c') a[1] = d?d._id:DB._i;
+		a.push(nd);
+		for(k in x) {
+			v=x[k].value;
+			switch(x[k].type) {
+				case 'color': v=parseInt(v.slice(1),16);
+				break; case 'checkbox': v=x[k].checked;
+			}
+			if(!d || (v?d[k]!==v:d[k])) nd[k]=v,c=1;
+		}
+		if(c) await dbPost(...a);
+		if(!nu) MENU.bs.hide(), utils.onNav();
+	}
 
+	//Draw menu
 	switch(type) {
 	case 'p':
 		await menu('p',"Part");
-		i.n=mkInput(f,"Name",1,d&&d.n);
-		i.d=mkInput(f,"Description",2,d&&d.d);
+		input('n', "Name / PN", I_TEXT);
+		input('m', "OEM (Optional)", I_TEXT);
+		input('d', "Description", I_AREA);
+		//s:subId, c:cmnt, cv:catVars, sv:subVars, v:vars
 		//TODO Cat fields, subcat fields, custom fields
 		//TODO Only send if value changed
-		M_BS.onclick=() => edit('p',{
-			n:i.n.value, d:i.d.value
-			//m:mfg, s:subId, c:cmnt, cv:catVars, sv:subVars, v:vars
-		});
+		M_BS.onclick=() => edit('p');
 	break; case 'c':
 		await menu('c',"Category");
-		i.n=mkInput(f,"Name",1,d&&d.n);
-		i.h=mkInput(f,"Track History",3,d?d.h:1);
+		input('n', "Name", I_TEXT);
+		input('h', "Track History", I_SWITCH, D?D.h:1);
 		//TODO Cat custom fields
-		M_BS.onclick=() => edit('c',{
-			n:i.n.value, h:i.h.checked
+		M_BS.onclick=() => edit('c');
+	break; case 's':
+		//TODO Fetch full WS settings via dbGet
+		mkMenu("Settings",1,600);
+		D=Usr, utils.mkEl('h2',MB,null,null,"User Settings");
+		input('n', "Display Name", I_TEXT);
+		input('e', "Email", I_EMAIL);
+		input('c1', "Primary Color", I_COLOR);
+		input('c2', "Accent Color", I_COLOR);
+		input(0, "Reset Colors", I_LINK).onclick=e => {
+			I[Usr].c1.value=WS.c1, I[Usr].c2.value=WS.c2;
+			e.preventDefault();
+		}
+		input(0, "Reset Password", I_LINK);
+		//TODO Only show if user has permission to edit these
+		D=WS, utils.mkEl('hr',MB);
+		utils.mkEl('h2',MB,null,null,"Workspace Settings");
+		input('e', "Email Domain", I_EMAIL, '*');
+		let u=D={}; input('i', "Brand Logo", I_FILE), D=WS;
+		input('c1', "Default Primary Color", I_COLOR);
+		input('c2', "Default Accent Color", I_COLOR);
+		//TODO input(null, "<info icon> Help & About", I_LINK);
+		M_BS.onclick=() => sync(async () => {
+			let f=I[u].i.files[0], p=[];//p=[edit('u',Usr,1), edit('w',WS,1)];
+			if(f) p.push(getUri('/up?icon',f,1));
+			await Promise.all(p);
+			MENU.bs.hide(), utils.onNav();
 		});
 	break; default:
 		throw "Bad View Mode";
@@ -297,7 +371,7 @@ async function editor(type, id) {try {
 
 //============================================== Database ==============================================
 
-const ES={db:"DB", up:"Upload"}, _eRX = /[^\w <>,.:;?/\\!@#$^*()"'|_+={}\[\]-]/g;
+const _eRX = /[^\w <>,.:;?/\\!@#$^*()"'|_+={}\[\]-]/g;
 function _enc(x) {return '%'+x.charCodeAt(0).toString(16).toUpperCase()}
 function _enp(s,b) {
 	if(typeof s==='object') s=JSON.stringify(s).slice(1,-1);
@@ -309,19 +383,18 @@ async function getUri(uri,d,b) {
 	if(b) r.method="POST", r.body=d, u=uri; else u=uri+'?'+d;
 	try {r=await fetch(new Request(u,r)), b=await r.text()}
 	catch(e) {
-		let eu=ES[uri]; if(!eu) throw e;
-		e=`${e}`, u=e.indexOf(':');
-		throw `<b>${eu} ${e.slice(0,u+1)}</b> ${e.slice(u+2)} @ <i>${d}</i>`;
+		b=tCase(uri.slice(1)), e=`${e}`, u=e.indexOf(':');
+		throw `<b>${b} ${e.slice(0,u+1)}</b> ${e.slice(u+2)} @ <i>${d}</i>`;
 	}
+	if(r.status===410 && uri==='/db') logout(1);
 	if(r.status!==200) {
-		let eu=ES[uri];
-		throw eu?`<b>${eu} Code ${r.status}:</b> ${b} @ <i>${d}</i>`:b;
+		throw `<b>${tCase(uri.slice(1))} Code ${r.status}:</b> ${b} @ <i>${d}</i>`;
 	}
 	return b;
 }
 async function _DBQ(a,b) {
 	Array.prototype.forEach.call(a,(n,i) => {a[i]=_enp(n,b)});
-	b=await getUri('db',Array.prototype.join.call(a,'&'),b);
+	b=await getUri('/db',Array.prototype.join.call(a,'&'),b);
 	b=!b||b==='1'||JSON.parse(b), console.debug(...a,b);
 	return b;
 }
@@ -330,26 +403,69 @@ function dbPost() {return _DBQ(arguments,1)}
 
 //============================================== Support ==============================================
 
-function mkInput(par, name, mode, val) {
-	let r,l,i;
-	if(par.tagName==='TABLE') r=utils.mkEl('tr',par);
-	if(mode===3) {
-		if(r) r=utils.mkEl('td',r), r.colSpan=2;
-		i=utils.mkDiv(r||par,'form-check form-switch');
-		if(r) l=utils.mkEl('label',i,'form-check-label');
-		i=utils.mkEl('input',i,'form-check-input');
+const I_TEXT=1,
+I_AREA=2,
+I_EMAIL=3,
+I_COLOR=4,
+I_FILE=5,
+I_SWITCH=6,
+I_LINK=7;
+
+function mkInput(par, name, type, val) {
+	let r=par.id==='MB' && !M_F.hidden, l,i,c,b;
+	switch(type) {
+	case I_TEXT: case I_AREA: case I_EMAIL:
+		if(r) r=utils.mkDiv(par), l=utils.mkEl('label',r,'lbl');
+		i=utils.mkEl(type===I_AREA?'textarea':'input', r||par,
+			'form-control'+(l?' iLbl':''));
+		if(type===I_EMAIL) i.type='email';
+	break; case I_COLOR:
+		r=utils.mkDiv(par,'cInp');
+		i=utils.mkEl('input',r,'form-control form-control-color');
+		l=utils.mkEl('label',r);
+		i.type='color';
+	break; case I_FILE:
+		//TODO Handle preview/filename for pre-existing URL from 'val' param, get mime type
+		r=utils.mkDiv(par);
+		l=utils.mkEl('label',r,'lbl');
+		c=utils.mkDiv(r,'form-control iLbl');
+		i=utils.mkEl('input',c), i.type='file';
+		c=utils.mkEl('span',c);
+		b=utils.mkEl('button',r,'btn tabB',null,"Clear");
+		utils.center(b,'x');
+		b.onclick=() => {i.value='',i.onchange()}
+		(i.onchange=(_,f) => {
+			if(f==null) f=i.files[0];
+			if(!f) return c.textContent="No file chosen", b.hidden=1;
+			if(!f.type.startsWith("image/"))
+				return c.textContent=f.name, b.hidden=0;
+			let rd=new FileReader();
+			rd.onload=() => {
+				c.innerHTML=`<img src='${rd.result}' style='width:100%'>`;
+				b.hidden=0;
+			}
+			rd.readAsDataURL(f);
+		})(0,val);
+	break; case I_SWITCH:
+		l=utils.mkDiv(par,'form-switch');
+		i=utils.mkEl('input',l,'form-check-input');
+		l=utils.mkEl('label',l);
 		i.type='checkbox', i.role='switch';
 		i.setAttribute('switch','');
-	} else {
-		if(r) l=utils.mkEl('label', utils.mkEl('td',r), 'col-form-label');
-		i=utils.mkEl(mode===2?'textarea':'input', r?utils.mkEl('td',r):par, 'form-control');
+	break; case I_LINK:
+		i=utils.mkEl('a',par,'iLnk');
+		i.href=val||'#', i.textContent=name;
+		return i;
+	default:
+		throw "Unknown input type "+type;
 	}
 	i.title=name;
 	if(l) l.htmlFor=i.id='f'+par.childElementCount, l.textContent=name;
 	else i.placeholder=name;
-	i.onblur=() => i.value=mode===1?tCase(i.value):i.value.trim();
-	if(mode===2) utils.autosize(i,10);
-	if(val) mode===3?i.checked=val:mode===2?i.set(val):i.value=val;
+	if(type===I_FILE) return i;
+	i.onblur=() => i.value=type===I_TEXT?tCase(i.value):i.value.trim();
+	if(type===I_AREA) utils.autosize(i,10);
+	if(val) type===I_SWITCH?i.checked=val:type===I_AREA?i.set(val):i.value=val;
 	return i;
 }
 
@@ -366,9 +482,13 @@ function _lClk(e) {e.preventDefault(),go(this.href)}
 const R_TU=/_|:|\s+/g, R_TS=/(?=[^a-zA-Z][a-zA-Z])/g;
 
 function tCase(s) {
-	if(!s) return ''; s=s.replace(R_TU,' ').trim().split(R_TS);
+	if(!(s=s.replace(R_TU,' ').trim())) return ''; s=s.split(R_TS);
 	s.forEach((w,i) => {s[i]=(i?w[0]:'')+w[i?1:0].toUpperCase()+w.slice(i?2:1)});
 	return s.join('');
+}
+
+function getHSL(hex) {
+	return utils.rgbToHsl(...utils.hexToRgb(hex)).map(n => Math.round(n));
 }
 
 //============================================== Grabable ==============================================
