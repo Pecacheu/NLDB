@@ -61,7 +61,9 @@ body.fixed { padding-bottom:var(--hdr-h); }
 ::selection { background:hsla(var(--h1), var(--sl1), .5); }
 h1 { font-size:30pt; font-weight:100; margin-bottom:1rem; }
 h2 { font-size:20pt; font-weight:100; margin-bottom:1rem; }
+p,h1,h2,h3,h4,h5,h6,label { overflow-wrap:anywhere; }
 label { font-size:12pt; font-weight:100; }
+td { padding:0; }
 
 .iLnk { display:block; width:fit-content; }
 .lbl {
@@ -69,16 +71,20 @@ label { font-size:12pt; font-weight:100; }
 	border-radius:var(--bs-border-radius) var(--bs-border-radius) 0 0;
 	background:var(--bs-border-color);
 }
-:has(:is(input,textarea):focus) > .lbl { background:none; }
-:has(:is(input,textarea):not(:focus)) > .iLbl { border-top-left-radius:0; }
+:has(:is(input,textarea,select):focus) > .lbl { background:none; }
+:has(:is(input,textarea,select):not(:focus)) > .iLbl { border-top-left-radius:0; }
 div.iLbl { position:relative; color:var(--bs-secondary-color); }
+div.iLbl:has(.fInp):not(:has(img)) { padding-right:.375rem; }
 div.iLbl:has(img) { padding:0; }
 .iLbl > input {
-	position:absolute; width:100%; height:100%;
-	top:0; left:0; opacity:0;
+	position:absolute; width:100%; height:100%; top:0; left:0;
+	opacity:0; background:none; outline:none; border:none;
+	padding:.375rem calc(34px + .75rem) .375rem .75rem;
 }
 .iLbl > input::file-selector-button { display:none; }
 .cInp { display:flex; gap:10px; align-items:center; }
+.fInp { display:flex; gap:5px; align-items:start; }
+.fInp span { flex-grow:1; pointer-events:none; }
 .tabB {
 	padding:0 10px 3px 10px;
 	color:var(--bs-body-color); background:var(--bs-border-color);
@@ -91,7 +97,7 @@ div.iLbl:has(img) { padding:0; }
 a { color:var(--bs-link-color); }
 a:hover { color:var(--bs-link-hover-color); }
 .form-control { overflow:hidden; }
-.form-control:focus,.form-check-input:focus {
+.form-control:focus,.form-select:focus,.form-check-input:focus {
 	border-color:var(--border-sel); box-shadow:var(--shadow2);
 }
 :has(input:focus) > .iLbl {
@@ -99,6 +105,17 @@ a:hover { color:var(--bs-link-hover-color); }
 }
 textarea.form-control {
 	transition:border-color .15s ease-in-out,box-shadow .15s ease-in-out;
+}
+select::-webkit-scrollbar { width:0; }
+.form-select[multiple] { padding:4px 6px; scrollbar-width:none; }
+.form-select[multiple] option {
+	border-radius:99vh; padding:2px 10px; margin:2px 0; transition:none;
+}
+.form-select[multiple] option:disabled { opacity:.5 !important; }
+.form-select[multiple]:not(:focus) option:checked { opacity:.7; }
+.form-select[multiple] option:checked {
+	background:linear-gradient(0deg, var(--border-sel) 0%, var(--border-sel) 100%);
+	color:selecteditemtext;
 }
 .form-switch { margin:0; padding:0; }
 .form-switch .form-check-input {
@@ -147,9 +164,9 @@ div.modal-dialog { max-width:var(--bs-modal-width); margin:var(--bs-modal-margin
 .modal.mSnap .modal-dialog { max-width:unset; margin:var(--bs-modal-margin); }
 .modal-title { font-size:1.25rem; }
 
-#HMB,#HMB *,.nav * { transition:none !important; }
-#HDR button:hover,#OB button:hover { background:var(--hover-bg); }
-#HDR button:focus-visible,#OB button:focus-visible {
+#MHB,#MHB *,.nav * { transition:none !important; }
+:is(#HDR,#OB,.fInp) button:hover { background:var(--hover-bg); }
+:is(#HDR,#OB,.fInp) button:focus-visible {
 	outline:0; background:var(--hover-bg);
 	box-shadow:0 0 0 .25rem var(--hover-shadow);
 }
@@ -161,11 +178,19 @@ div.modal-dialog { max-width:var(--bs-modal-width); margin:var(--bs-modal-margin
 	background:linear-gradient(var(--hdr-bg),var(--hdr-bg2));
 	user-select:none; transition:transform .2s;
 }
-#HDR button {
+#HDR button,.fInp button {
 	--hover-bg:#00000033; --hover-shadow:#0000001a;
 	width:var(--hdr-bs); height:var(--hdr-bs); font-size:var(--hdr-bs);
 	border:none; padding:0; color:inherit; background:none;
-	border-radius:50%; vertical-align:top;
+	border-radius:99vh; vertical-align:top; overflow:hidden;
+}
+#HDR button:not(:last-child) { margin-right:5px; }
+#HDR #SAVE { width:auto; margin:0; }
+#HDR #SAVE:hover { background:none; opacity:.8; }
+#SAVE object { height:38px; pointer-events:none; }
+.fInp button {
+	position:relative; width:auto; height:auto;
+	border-radius:8px; padding:0 5px;
 }
 .sIcon {
 	display:inline-block; width:26px; height:26px; background:var(--hdr-fg);
@@ -175,12 +200,12 @@ div.modal-dialog { max-width:var(--bs-modal-width); margin:var(--bs-modal-margin
 #LOGO {
 	position:absolute; top:5px; left:0; width:100%;
 	height:calc(100% - 10px); z-index:-1; background:var(--hdr-fg);
-	mask:url(/icon128.png) center / contain no-repeat;
-	-webkit-mask:url(/icon128.png) center / contain no-repeat;
+	mask:url(/logoSml.png) center / contain no-repeat;
+	-webkit-mask:url(/logoSml.png) center / contain no-repeat;
 }
 #HM { float:right; }
-#HMB.user { background:#0000001a; font-size:14pt; }
-#HMB.user i { display:none; }
+#MHB.user { background:#0000001a; font-size:14pt; }
+#MHB.user i { display:none; }
 
 #FTR {
 	position:fixed; bottom:0; left:0; width:100%; text-align:center;
@@ -205,15 +230,12 @@ div.modal-dialog { max-width:var(--bs-modal-width); margin:var(--bs-modal-margin
 	user-select:none; font-size:14pt; font-weight:100;
 	align-items:center; background:#00000033;
 }
-#OB > :last-child { margin-bottom:0; }
+:is(#OB,.pl) > :last-child { margin-bottom:0; }
 
 #MB > * { margin-bottom:10px; }
 #MB > :last-child { margin-bottom:0; }
-/*.fTbl td { padding:0; border:10px solid #00000000; }
-.fTbl tr:first-child td { border-top:0; }
-.fTbl tr:last-child td { border-bottom:0; }
-.fTbl td:first-child { border-left:0; }
-.fTbl td:last-child { border-right:0; width:100%; }*/
+.modal-footer { justify-content:flex-start; }
+#M_NC { margin-left:auto; }
 
 /* Page */
 #CONT > :last-child { margin-bottom:0; }
@@ -228,6 +250,16 @@ div.modal-dialog { max-width:var(--bs-modal-width); margin:var(--bs-modal-margin
 @media(max-width:330px) {.cl a { width:100%; }}
 
 .pv p { white-space:pre-wrap; }
+.pv table { margin-bottom:1rem; }
+.pv td:last-child { vertical-align:top; padding-left:10px; }
+.pv td img { height:96px; border-radius:10px; }
+.pv td h2 { margin:0; }
+
+.hr {
+	border-bottom:1px solid var(--bs-border-color);
+	padding-bottom:12px;
+}
+h3.hr { margin-bottom:12px; }
 
 /* Font */
 @font-face {

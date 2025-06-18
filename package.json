@@ -5,6 +5,7 @@
 		"chalk": "^5.4.1",
 		"mongodb": "^6.16.0",
 		"raiutils": "^8.7.4",
+		"rate-limiter-flexible": "^7.1.1",
 		"sharp": "^0.34.2"
 	}
 }

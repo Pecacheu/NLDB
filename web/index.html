@@ -2,7 +2,7 @@
 <html><head>
 <title>NLDB</title>
 <meta charset=utf8>
-<link rel=icon type=image/png href=icon128.png>
+<link rel=icon href=logoSml.png>
 <meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,shrink-to-fit=no">
 <meta name=theme-color content="#000">
 <style>
@@ -22,7 +22,6 @@
 </style>
 <link rel=stylesheet href=r/bootstrap.css>
 <link rel=stylesheet href=r/style.css>
-<!--<link rel=stylesheet href=r/upload.css>-->
 <script src=utils.js></script>
 <script src=r/bootstrap.js></script>
 <script src=r/HtmlSanitizer.js></script>
@@ -34,28 +33,21 @@
 <link rel=preload href=r/type/OpenSansReg.woff2 as=font crossorigin=anonymous>
 <link rel=preload href=r/type/OpenSansBold.woff2 as=font crossorigin=anonymous>
 <link rel=preload href=r/type/BootstrapIcons.woff2 as=font crossorigin=anonymous>
-<!--<link rel=preload href=r/qr.svg as=image>
-<link rel=preload href=r/save.svg as=image>-->
+<link rel=preload href=r/save.svg as=image crossorigin=anonymous>
+<!--<link rel=preload href=r/qr.svg as=image>-->
 </head><body>
 <div id=LOAD><div>...</div></div>
-<div id=HDR>
-	<button id=BACK></button>
-	<button id=EDIT></button>
-	<div id=LOGO></div>
-	<div id=HM>
-		<button id=HSB title="Search"><i class=bi style='font-size:20px'>&#xF52A;</i></button>
-		<button id=HMB title="Menu"><i class=bi style='font-size:28px'>&#xF4DA;</i><span></span></button>
-	</div>
-</div>
+<div id=HDR><button id=BACK></button><button id=CFG title="Configure"><i class=bi style='font-size:22px'>&#xF4CA;</i></button><button id=EDIT></button><div id=LOGO></div><div id=HM><button id=SAVE title="Save"><object data=r/save.svg></object></button><button id=SHB title="Search"><i class=bi style='font-size:20px'>&#xF52A;</i></button><button id=HHB title="Item History"><i class=bi style='font-size:22px'>&#xF292;</i></button><button id=MHB title="Menu"><i class=bi style='font-size:28px'>&#xF4DA;</i><span></span></button></div></div>
 <span id=CONT></span>
-<div id=FTR><img src=icon128.png><a href=https://github.com/pecacheu/nldb>NLDB <span id=NV></span></a> | Utils <span id=UV></span></div>
-<div id=MENU class="modal fade"><div class=modal-dialog><div class=modal-content><div id=M_H class=modal-header><h1 id=M_T class=modal-title></h1><button class=btn-close data-bs-dismiss=modal></button></div><div id=MB class=modal-body></div><div id=M_F class=modal-footer><button id=M_BC class="btn btn-secondary" data-bs-dismiss=modal>Cancel</button><button id=M_BS class="btn btn-primary">OK</button></div></div></div></div>
+<div id=FTR><img src=logoSml.png><a href=https://github.com/pecacheu/nldb>NLDB <span id=NV></span></a> | Utils <span id=UV></span></div>
+<div id=MENU class="modal fade"><div class=modal-dialog><div class=modal-content><div id=M_H class=modal-header><h1 id=M_T class=modal-title></h1><button class=btn-close data-bs-dismiss=modal></button></div><div id=MB class=modal-body></div><div id=M_F class=modal-footer><button id=M_DEL class="btn btn-danger">Delete</button><button id=M_NC class="btn btn-secondary" data-bs-dismiss=modal>Cancel</button><button id=M_CPY class="btn btn-secondary">Copy...</button><button id=M_OK class="btn btn-primary">OK</button></div></div></div></div>
 <div id=OC class="offcanvas offcanvas-end">
 	<div class=offcanvas-header><h1 class=offcanvas-title>Main Menu</h1><button class=btn-close data-bs-dismiss=offcanvas></button></div>
 	<div id=OB class=offcanvas-body>
 		<div id=O_USR></div>
 		<button id=O_LI><i class=bi>&#xF1BE;</i><span>Login</span></button>
-		<button id=O_CF><i class=bi>&#xF4CA;</i><span>Configure</span></button>
+		<button id=O_LL><i class=bi>&#xF2D1;</i><span>Locations</span></button>
+		<button id=O_HL><i class=bi>&#xF292;</i><span>History</span></button>
 		<button id=O_TH></button>
 		<button id=O_SE><i class=bi>&#xF3E3;</i><span>Settings</span></button>
 		<button id=O_LO><i class=bi>&#xF1C3;</i><span>Log Out</span></button>
