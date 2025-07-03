@@ -1,8 +1,9 @@
 //NLDB, Pecacheu 2025. GNU GPL v3
 'use strict';
 
-let Usr, Dat, Cat, Edit, DB, WS, LM, LScr, safeHTML, MStack=[];
-const R_UC=/[A-Z]/, TknExp=48*3600000;
+let Usr, Dat, Cat, Edit, DB, WS, LM,
+LScr, Loader, safeHTML, MStack=[], PageLen;
+const R_UC=/[A-Z]/, LOC_LIM=2000, H_MIN={c:100, h:87};
 
 //============================================== UI & Nav ==============================================
 
@@ -29,15 +30,19 @@ onload=() => {try {
 	//Workspace & Theme
 	if(!(WS=ck.w)) throw "Failed to load workspace (Check your cookie settings)";
 	WS=WS.split('~');
-	if(!lp) NV.textContent=WS[0];
+	if(!lp) NV.textContent='v'+WS[0];
 	setTheme(Number(localStorage.getItem('t')), 0, '#'+WS[1], '#'+WS[2]);
 	//Login Page
 	if(lp) {
 		BL.onclick=BS.onclick=login;
 		return DB=utils.onNav=onresize=onscroll=onkeydown=null;
 	}
+	//HTML Parser
+	let h=HtmlSanitizer;
+	h.AllowedSchemas.splice(0,100,'/?p:','/?u:','/?l:','https:','data:');
+	delete h.AllowedAttributes.id, delete h.AllowedTags.DIV;
+	safeHTML=h.SanitizeHtml;
 	//Header
-	safeHTML=HtmlSanitizer.SanitizeHtml;
 	SHB.onclick=() => searchMenu();
 	MHB.onclick=userMenu;
 	HHB.onclick=() => go('?h:p,'+DB._i);
@@ -45,8 +50,7 @@ onload=() => {try {
 		if(Dat && (Edit || Dat.dty)) {
 			setEdit(0);
 			if(Dat.dty) delete Dat.dty, utils.onNav();
-		} else if(history.state==='NLDB') utils.goBack();
-		else go('/');
+		} else goBack();
 	}
 	EDIT.onclick=() => {Edit?editor(NE_TYPE[DB._v]):setEdit(1)}
 	//Menu
@@ -58,15 +62,22 @@ onload=() => {try {
 		for(let e of m[1]) MB.appendChild(e);
 		M_OK.onclick=m[2], M_DEL.onclick=m[3], M_CPY.onclick=m[4];
 	});
-	MENU.addEventListener('hidden.bs.modal', () => {MB.textContent='',MENU.w=0});
+	MENU.addEventListener('hidden.bs.modal', () => {
+		if(MENU.a===1) return MENU.bs.show(),MENU.a=0;
+		M_OK.onclick=M_DEL.onclick=M_CPY.onclick=null;
+		MB.textContent='', MENU.w=0;
+	});
+	MENU.addEventListener('shown.bs.modal', () => {
+		if(MENU.a===2) MENU.bs.hide(),MENU.a=0;
+	});
 	CFG.onclick=() => editor(DB._v, DB._i);
-	O_LL.onclick=locView;
-	O_HL.onclick=() => go('?h:'+Cat._id);
+	O_LL.onclick=() => go('?lt:'+Cat._id,2);
+	O_HL.onclick=() => go('?h:'+Cat._id,2);
 	O_TH.onclick=() => {setTheme(LM?0:1,1),userMenu()}
 	O_SE.onclick=() => editor('s');
 	O_LI.onclick=() => go('/login',1);
 	O_LO.onclick=() => {
-		if(!Edit) dbGet('lo').then(() => logout(2)).catch(err);
+		if(!Edit) dbGet('lo').then(() => logout(1)).catch(err);
 	}
 	UV.textContent=utils.VER;
 } catch(e) {
@@ -104,10 +115,13 @@ async function login(e) {
 	}
 }
 function logout(f) {
+	if(!Usr) f=0;
 	Usr=null; utils.remCookie('k');
 	localStorage.clear();
-	if(f===2) utils.onNav(),userMenu();
-	else if(f===1) utils.onNav(1);
+	if(f) { //Refresh View
+		utils.onNav();
+		if(OC.bs._isShown) userMenu();
+	}
 }
 
 //Touch Keyboard Detect
@@ -125,12 +139,15 @@ if('visualViewport' in window) {
 onresize=() => {
 	DB.classList.toggle('fixed',DB.innerRect.h+48 <= utils.h);
 	if(MENU.w) MENU.classList.toggle('mSnap',utils.w < MENU.w+56);
+	calcPLen();
 }
 onscroll=() => {
 	let h=scrollY-LScr > 0;
 	HDR.classList.toggle('hide',h);
 	FTR.classList.toggle('hide',h);
 	LScr=scrollY;
+	if(Loader && !Loader.l && DB.scrollHeight -
+		utils.h - scrollY < 200) Loader._load();
 }
 /*onkeydown=e => {
 	if(e.key == 'Home') return go('/');
@@ -146,8 +163,14 @@ onscroll=() => {
 }
 onbeforeunload=() => Edit||Itm&&Itm.dty?"Are you sure?":null;*/
 
-utils.onNav = async e => {
+function calcPLen() {
+	let m=H_MIN[DB._v];
+	PageLen=m?Math.ceil(utils.h/m):10;
+}
+
+utils.onNav = async () => {
 	let q=location.search.slice(1);
+	DB._lv=DB._v||'';
 	[DB._v, DB._i] = parseNav(DB._q=q);
 	//Loader
 	DB.removeAttribute('load');
@@ -157,32 +180,32 @@ utils.onNav = async e => {
 	ls.display=null, ls.opacity=1;
 	//Header
 	let k=utils.getCookie('k');
-	if(k) utils.setCookie('k',k,TknExp);
+	if(k) utils.setCookie('k',k,-1);
 	else if(Usr) logout();
 	MHB.className=Usr?'user':'';
 	MHB.lastChild.textContent=Usr?Usr.ns:'';
-	O_SE.hidden=!Usr;
-	setEdit(Edit), EDIT.hidden=!Usr;
+	EDIT.hidden=(O_SE.hidden=!Usr) || DB._v==='h';
+	setEdit(Edit,1);
 	//Draw View
-	CONT.textContent='';
-	if(e===1) return;
+	if(Dat && Dat._ac) Dat._ac.abort();
+	CONT.textContent='',Loader=Dat=0;
+	calcPLen();
 	try {
-		/*if(i.startsWith('l:')) await listView(i.slice(2));
-		else if(i.startsWith('t:')) await tableView(i.slice(2));
-		else if(i.startsWith('c:')) await catView(i.slice(2));
-		else if(i.startsWith('s:')) await catView(i.slice(2),1);
-		else if(i) await itemView(i);*/
 		switch(DB._v) {
-			case 'p': await partView(); break;
 			case 'c': await plView(); break;
+			case 'lt': await ltView(); break;
+			case 'l': await locView(); break;
 			case 'h': await hlView(); break;
+			case 'ul': await ulView(); break;
+			case 'p': await partView(); break;
 			default:
 				if(q) {await setCat(); throw "Bad Path"}
 				await catView();
 		}
 	} catch(e) {
 		console.error(e);
-		setEdit(0), EDIT.hidden=O_HL.hidden=O_LL.hidden=1
+		if(e.name==='AbortError') return;
+		setEdit(0), EDIT.hidden=O_HL.hidden=O_LL.hidden=1;
 		CONT.innerHTML=safeHTML(`<p style='color:red'>${e}</p>`);
 	} finally {
 		onresize(), clearTimeout(t); DB.mt.content=DB.tc;
@@ -193,66 +216,148 @@ utils.onNav = async e => {
 }
 
 function go(uri, force) {
+	let o=location.origin, u=new URL(uri,o), s=u.search.slice(1);
+	o=u.origin===o && s;
 	if(Dat && (Edit || Dat.dty)) {
 		if(Dat.dty) return err("You haven't saved your changes! Please press Save or Cancel.");
-		let s=uri.indexOf('?');
-		if(s!==-1) editor(...parseNav(uri.slice(s+1)));
-	} else if(force) location=uri;
-	else utils.go(uri,'NLDB');
+		if(o && force!==2) return editor(...parseNav(s));
+		setEdit(0);
+	}
+	if(force===1) location=uri;
+	else if(o && s.startsWith('u:')) editor(...parseNav(s));
+	else utils.go(uri);
+}
+
+function goBack() {
+	if(Cat && DB._v!=='c') {
+		if(DB._v==='l') ltSel();
+		else if(DB._lv==='h') go('/?h:'+Cat._id);
+		else go('/?c:'+Cat._id);
+	} else go('/');
 }
 
 function parseNav(q) {
 	let x=q.indexOf(':');
-	return [x===-1?'':q.slice(0,x), x===-1?'':q.slice(x+1)];
+	return [x===-1?q:q.slice(0,x), x===-1?'':q.slice(x+1)];
 }
 
-function setEdit(e) {
+function setEdit(e,f) {
 	Edit=e;
 	BACK.innerHTML=`<i class=bi>&#x${e?'F62A':'F12C'};</i>`;
 	EDIT.innerHTML=`<i class=bi${e?'>&#xF4FE':' style="font-size:20px">&#xF4C8'};</i>`;
-	BACK.title=e?"Cancel":"Back", EDIT.title=e?"Add":"Edit";
-	BACK.hidden=!DB._q && !e, CFG.hidden=!Usr || !DB._q || e;
+	BACK.title=e?DB._v==='p'?"Cancel":"Done":"Back", EDIT.title=e?"Add":"Edit";
+	BACK.hidden=!DB._q && !e, CFG.hidden=EDIT.hidden || !DB._q || e;
 	SHB.hidden=(MHB.hidden=!(SAVE.hidden=!e||DB._v!=='p'))||!DB._v;
-	HHB.hidden=e||DB._v!=='p';
+	if(!f) setCat(Cat);
 }
 
 //============================================== View Draw ==============================================
 
 async function catView() {
-	document.title="NLDB";
+	setTitle();
 	Dat=await dbGet('cl'), await setCat();
 	if(!Dat.length) return CONT.innerHTML="<i class=na>No categories yet...</i>";
-	let c=utils.mkDiv(CONT,'cl'),d,a;
-	for(d of Dat) {
-		a=utils.mkEl('a',c,null,null,'<i class=bi>&#xF8C4;</i><br>');
-		utils.addText(a,d.n), mkLink(a,`?c:${d._id}`);
-	}
+	let c=utils.mkDiv(CONT,'cl'),d;
+	for(d of Dat) draw(c,'c',d);
 }
 
-async function plView() {
-	Dat=(await Promise.all([dbGet('pl',DB._i), setCat(DB._i)]))[0];
-	if(!Dat.length) return CONT.innerHTML="<i class=na>No parts yet...</i>";
-	let c=utils.mkDiv(CONT,'pl'),d;
+async function plView(page=0) {
+	let d=dbGet('pl', DB._i, page, PageLen),c,n;
+	if(page) {
+		d=await d, Dat.push(...d.d), n=d.n;
+		c=CONT.firstChild, c.textContent='';
+	} else {
+		d=(await Promise.all([d, setCat(DB._i)]))[0];
+		setTitle(Cat.n), Dat=d.d, n=d.n;
+		if(!Dat.length) return CONT.innerHTML="<i class=na>No parts yet...</i>";
+		c=utils.mkDiv(CONT,'pl');
+	}
 	utils.mkEl('h1',c).textContent=Cat.n;
 	for(d of Dat) draw(c,'p',d);
+	if(n) mkLoader(c,page,plView);
 }
 
-async function hlView() {
-	Dat=(await Promise.all([dbGet('hl',DB._i), setCat(DB._i)]))[0];
-	if(!Dat.length) return CONT.innerHTML="<i class=na>No events yet...</i>";
-	let c=utils.mkDiv(CONT,'pl'),d;
-	utils.mkEl('h1',c).textContent="History: "+Cat.n;
+async function hlView(page=0) {
+	let si=DB._i.split(','), t=si.length===2?si[0]:0, i=si[1]||si[0],
+	d=dbGet('hl', i, page, PageLen),c,n;
+	if(page) {
+		d=await d, Dat.push(...d.d), n=d.n;
+		c=CONT.firstChild, c.textContent='';
+	} else {
+		d=[d, dbGet('ul'), setCat(i)];
+		if(t==='p') d.push(dbGet('p',i));
+		d=await Promise.all(d), Dat=d[0].d, n=d[0].n;
+		Dat.u={}, Dat.h={}, si=d[3];
+		for(d of d[1]) Dat.u[d._id]=d; //Cache users
+		Dat.t=(t?F_TYPE[t]+' ':'')+"History: "+(si?si.n:Cat.n);
+		setTitle(Dat.t);
+		if(!Dat.length) return CONT.innerHTML="<i class=na>No events yet...</i>";
+		c=utils.mkDiv(CONT,'hl');
+	}
+	for(d of Dat) if(d.n&&(i=d.p||d.l)) Dat.h[i]=d.n; //Cache parts/locs
+	utils.mkEl('h1',c).textContent=Dat.t;
 	for(d of Dat) draw(c,'h',d);
+	if(n) mkLoader(c,page,hlView);
+}
+
+//Location tree
+async function ltView() {
+	let i=DB._i,c,t;
+	Dat=await dbGet('ll', i, 0, LOC_LIM);
+	await setCat(Dat.c||i);
+	setTitle(t="Locations: "+Cat.n);
+	if(!Dat.d.length) return CONT.innerHTML="<i class=na>No locations yet...</i>";
+	if(Dat.n) return err("Too many locations to parse!");
+	c=utils.mkDiv(CONT,'lt');
+	utils.mkEl('h1',c).textContent=t;
+	try {
+		tblToTree(Dat.d, (l,nd) => {
+			let r=draw(c,'l',l,1);
+			r.style.marginLeft=(25*nd)+'px';
+			if(l._id===i) r.r.checked=1;
+			r.r.oninput=() => ltSel(r);
+		});
+	} catch(e) {
+		if(!(e instanceof TreeError)) throw e;
+		CONT.textContent='', console.error(e);
+		mkMenu("Fix Location Errors?", 1);
+		MB.innerHTML=safeHTML(`<p style='color:red'>${e}</p><p>Moving these locations`+
+			` to the root level should fix the error. Attempt this?</p>`);
+		showMenu();
+		M_OK.onclick=() => e.ids.eachAsync(async d => {
+			await dbPost('lu',d._id,{p:''});
+		}).then(() => {hideMenu(),utils.onNav()}).catch(err);
+	}
+}
+function ltSel(r) {
+	if(!r) for(let i of CONT.querySelectorAll('input:checked')) i.checked=0;
+	[DB._v, DB._i] = parseNav(DB._q=r?'l:'+r._d._id:'lt:'+Cat._id);
+	history.pushState('','','/?'+DB._q);
+}
+
+function locView() {
+	//TODO Pick tree or list based on last used view
+	return ltView();
+}
+
+//TODO Get to this view somehow?
+async function ulView() {
+	Dat=await dbGet('ul'), await setCat();
+	let c=utils.mkDiv(CONT,'ul'),d;
+	utils.mkEl('h1',c).textContent="Users";
+	for(d of Dat) draw(c,'u',d);
 }
 
 async function partView() {
-	Dat=await dbGet('p',DB._i), await setCat(Dat._c);
-	let c=utils.mkDiv(CONT,'pv'), td=c, i=Dat.i;
+	let d=Dat=await dbGet('p',DB._i),
+	c=utils.mkDiv(CONT,'pv'), td=c, i=Dat.i;
+	await setCat(Dat._c);
 	if(i) {
 		let tt=utils.mkEl('tr',utils.mkEl('table',c));
 		utils.mkEl('img',utils.mkEl('td',tt)).src=lnkToUri(i);
 		td=utils.mkEl('td',tt);
 	}
+	setTitle((Dat.m?Dat.m+' ':'')+Dat.n);
 	utils.mkEl('h1',td).textContent=Dat.n;
 	if(Dat.m) utils.mkEl('h2',td).textContent=Dat.m;
 	if(Dat.d) utils.mkEl('p',c,null,null,safeHTML(Dat.d));
@@ -261,22 +366,113 @@ async function partView() {
 	utils.mkEl('h2',c,'hr').textContent=Cat.n;
 	utils.mkEl('h2',c,'hr',null,"Item");
 	//TODO Custom fields
-}
 
-async function locView() {
+	//Inventory
+	c=utils.mkDiv(CONT,'iv');
+	let r=utils.mkEl('h2',c,'hr itl',null,S_TABS.i);
+	r=utils.mkDiv(r,'bGrp');
+	let b=utils.mkEl('button',r,'rnb',null,"<i class=bi style='font-size:22px'>&#xF292;</i>");
+	b.title="Item History";
+	b=utils.mkEl('button',r,'rnb',null,"<i class=bi>&#xF4FE;</i>");
+	b.title="Add Inventory";
 
+	b=utils.mkDiv(c,null,null,"<i class=na>Loading...</i>");
+	(async () => {
+		Dat._ac=new AbortController();
+		i=await dbGet(Dat._ac, 'il', DB._i, 0, PageLen);
+		if(Dat !== d) return; //Other view loaded
+		if(!i.length) return b.firstChild.textContent="No stock yet...";
+		b.remove();
+		for(d of i) draw(c,'i',d,1);
+		//TODO Paging
+	})().catch(err);
 }
 
 //============================================== Item Draw ==============================================
 
-function draw(par, type, d) {
-	let a;
+const T_LOG=[0, "Create Item", "Create Stock", "Create Location",
+	"Delete Item", "Delete Stock", "Delete Location"];
+
+function draw(par, type, d, nl) {
+	if(d===0) return;
+	let c,a,n;
 	switch(type) {
-	case 'p':
-		a=utils.mkEl('a',utils.mkEl('p',par)), a.textContent=`${d.n} (${d.d})`;
-		mkLink(a,`?p:${d._id}`);
+	case 'c': //Cat
+		c=utils.mkEl('a',par,'cc',null,'<i class=bi>&#xF8C4;</i><br>');
+		utils.addText(c,d.n), mkLink(c,`?c:${d._id}`);
+	break; case 'p': //Part
+		c=utils.mkEl('a',par,'pc'), a=utils.mkDiv(c);
+		if(d.i) utils.mkEl('img',a).src=lnkToUri(d.i);
+		a=utils.mkDiv(a);
+		utils.mkEl('h1',a).textContent=d.n;
+		if(d.m) utils.mkEl('h2',a).textContent=d.m;
+		if(d.d) utils.mkEl('p',c).textContent =
+			d.d.length>100?d.d.slice(0,100)+'...':d.d;
+		mkLink(c,`?p:${d._id}`);
+	break; case 'i': //Inventory
+		c=utils.mkEl('a',par,'pc');
+		utils.mkDiv(c,'pcd',null,safeHTML(`${d.q} at <a href=/?l:${d.l}>${d.l}</a>`));
+		if(d.s) utils.mkDiv(c,'pcd',null,"<i class=hcc>S/N</i> "+safeHTML(d.s));
+		for(a of c.querySelectorAll('a')) mkLink(a);
+		if(!nl) mkLink(c,`?p:${d.p}`);
+	break; case 'l': //Location
+		c=utils.mkEl(nl?'label':'a',par,'pc');
+		utils.mkEl('h1',c).textContent=d.n;
+		if(d.d) utils.mkEl('p',c).textContent =
+			d.d.length>100?d.d.slice(0,100)+'...':d.d;
+		if(nl) {
+			c.r=a=utils.mkEl('input',c), a.type='radio', a.name='loc';
+			c.htmlFor=a.id=pUID();
+		} else mkLink(c,`?l:${d._id}`);
+	break; case 'h': //History
+		c=utils.mkEl('p',par,'hc'), a=utils.mkDiv(c);
+		utils.mkEl('b',a).textContent=T_LOG[d.t];
+		utils.mkDiv(a,'hcd').textContent=utils.formatDate(new Date(d.d));
+		n=Dat.u[d.u], a=`<a href=/?u:${d.u}>${n?n.n:'Unknown User'}</a> `;
+		switch(d.t) {
+		case 1: //Create Item
+			a+=`created <a href=/?p:${d.p}>${d.n}</a>`;
+		break; case 3: //Create Location
+			a+=`created <a href=/?l:${d.l}>${d.n}</a>`;
+			if(d.pl) a+=` at <a href=/?l:${d.pl}>${Dat.h[d.pl]||'Loc #'+d.pl}</a>`;
+		break; case 4: //Delete Item
+			a+=`deleted ${Dat.h[d.p]||'Part #'+d.p}`;
+		break; case 6: //Delete Location
+			a+=`deleted ${Dat.h[d.l]||'Loc #'+d.l}`;
+		break; default:
+			n=utils.copy(d,1);
+			delete n._id, delete n.d, delete n.c;
+			a=JSON.stringify(n);
+		}
+		a=utils.mkDiv(c,null,null,safeHTML(a));
+		for(a of a.querySelectorAll('a')) mkLink(a);
+		if(d.c) utils.mkDiv(c,'hcc').textContent=d.c;
+	break; case 'u': //User
+		c=nl?par:utils.mkEl('a',par,'pc');
+		a=utils.mkEl('h1',c);
+		if(!nl) a.innerHTML=`<i class=bi>&#xF4CF;</i> `;
+		utils.addText(a,d.n);
+		a=utils.mkEl(nl?'a':'p',c), a.textContent=d.e;
+		if(nl) a.href="mailto:"+d.e;
+		else mkLink(c,`?u:${d._id}`);
 	break; default:
-		utils.mkEl('p',par).textContent=JSON.stringify(d);
+		c=utils.mkEl('p',par,'pc');
+		c.textContent=JSON.stringify(d);
+	}
+	c._d=d;
+	return c;
+}
+
+//Loads more on scroll
+function mkLoader(par, page, loadFn) {
+	let l=Loader=utils.mkDiv(par,'scr',null,"<div>.</div>"), t=l.firstChild;
+	l._load=() => {
+		if(l.l) return;
+		loadFn(page+1).catch(err).then(() => {l.remove(),clearInterval(l.l)});
+		l.l=setInterval(() => {
+			if(Loader !== l) clearInterval(l.l);
+			if((t.textContent+='.').length>3) t.textContent='.';
+		},250);
 	}
 }
 
@@ -284,12 +480,12 @@ function draw(par, type, d) {
 
 const S_TABS={a:"All", p:"Parts", i:"Inventory", l:"Locations", u:"People"},
 F_TYPE={f:"Field", h:"Heading", t:"Text", p:"Item", i:"Inventory", l:"Location", u:"User"},
-NE_TYPE={'':'c', c:'p', p:'v'};
+NE_TYPE={'':'c', c:'p', p:'v', lt:'l', l:'l'};
 
 function mkMenu(name, btns, width, nc) {
 	if(MB.m && MENU.bs._isShown) MStack.push([MB.m, [...MB.children],
 		M_OK.onclick, M_DEL.onclick, M_CPY.onclick]);
-	MB.m=arguments;
+	MB.m=[name, btns, width];
 	M_T.textContent=name, M_H.hidden=name==null;
 	M_F.hidden=!btns, M_DEL.hidden=btns<2, M_CPY.hidden=btns<3;
 	MENU.style.setProperty('--bs-modal-width', (MENU.w=(width||500))+'px');
@@ -297,42 +493,59 @@ function mkMenu(name, btns, width, nc) {
 	if(!nc) MB.textContent='';
 	onresize();
 }
-function showMenu() {MENU.bs.show()}
-function hideMenu() {MStack=[], MENU.bs.hide()}
+function showMenu() {
+	if(MENU.bs._isTransitioning) MENU.a=1;
+	else MENU.bs.show();
+}
+function hideMenu(f) {
+	if(f) MStack=[];
+	if(MENU.bs._isTransitioning) MENU.a=2;
+	else MENU.bs.hide();
+}
 
-//TODO Retain last search str & results
-function searchMenu(sel='a') {
+function searchMenu(sel='a', iRes) {
 	mkMenu();
 	let s=mkInput(MB,"Search for anything...",I_TEXT),
 	tl=utils.mkEl('ul',MB,'nav nav-underline'),
 	rl=utils.mkDiv(MB,'pl'), sa=sel==='a',t,e,ns,ac;
+	if(sa && Cat._st) sel=Cat._st;
 	for(t in S_TABS) {
 		e=utils.mkEl('a',utils.mkEl('li',tl,'nav-item'),'nav-link'+
 			(t===sel?' active':'')+(sa?'':' disabled'),null,S_TABS[t]);
 		e.href='#', e.t=t, e.onclick=sa?sTab:e => e.preventDefault();
 	}
+	if(sa) {
+		if(Cat._sq) s.value=Cat._sq;
+		if(Cat._sr) res(Cat._sr, sel);
+	}
 	tl.t=sel, tl.s=s, s.onblur=null;
-
 	s.oninput=async () => {try {
 		if(ns) return ns=2;
 		ns=1, setTimeout(() => {
 			let n=ns===2; ns=0; if(n) s.oninput();
 		},300);
 		if(ac) ac.abort();
-		let q=s.value, t=tl.t, r;
-		ac=new AbortController();
+		let q=s.value, t=Cat._st=tl.t;
+		ac=new AbortController(), Cat._sq=q;
 		q=q?await dbGet(ac, 'q', Cat._id, t, q):[];
-		rl.textContent='';
-		if(Array.isArray(q)) for(r of q) draw(rl,t,r);
-		else for(t in q) {
+		ac=null; res(Cat._sr=q, t);
+	} catch(e) {err(e)}}
+	function res(rd,t) {
+		rl.textContent=''; let r;
+		if(Array.isArray(rd)) for(r of rd) doDraw(rl,t,r);
+		else for(t in rd) {
 			utils.mkEl('h3',rl,'hr').textContent=S_TABS[t];
-			for(r of q[t]) draw(rl,t,r);
+			for(r of rd[t]) doDraw(rl,t,r);
 		}
-		ac=null;
-	} catch(e) {
-		if(e.name==='AbortError') console.debug("Aborted search");
-		else err(e);
-	}}
+	}
+	function doDraw(p,t,d) {
+		let r=draw(p,t,d);
+		r.onclick=e => {
+			e.preventDefault();
+			if(iRes) iRes.set(r._d); else go(r.href,2);
+			if(iRes || t!=='u') hideMenu();
+		}
+	}
 	showMenu();
 	setTimeout(() => s.focus(),200);
 }
@@ -382,13 +595,14 @@ async function editor(type, id) {try {
 		a.push(nd);
 		for(k in i) {
 			f=i[k];
-			if(f.multiple) {
+			if(f._t===I_MULTI) {
 				v=[];
 				f.options.each(o => {o.selected&&v.push(o.value)});
-			} else if(f.tagName==='SELECT') {
+			} else if(f._t===I_DROP) {
 				v=f.value;
 				if(Number.isFinite(b=Number(v))) v=b;
-			} else {
+			} else if(typeof f._t==='string') v=f._id;
+			else {
 				v=f.value;
 				switch(f.type) {
 				case 'color':
@@ -415,7 +629,7 @@ async function editor(type, id) {try {
 
 	//Draw menu
 	switch(type) {
-	case 'c':
+	case 'c': //Category
 		let cd=DB._v===''?Dat:await dbGet('cl'), cl={},c;
 		for(c of cd) if(c._id!==id) cl[c._id]=c.n;
 		await menu('c',"Category");
@@ -425,7 +639,7 @@ async function editor(type, id) {try {
 		c=input('e', "External Locations", I_MULTI, null, cl);
 		if(!cd.length) c.parentElement.hidden=1;
 		//TODO Cat custom fields
-	break; case 'p':
+	break; case 'p': //Part
 		await menu('p',"Part");
 		input('n', "Name / PN", I_TEXT);
 		input('m', "OEM (Optional)", I_TEXT);
@@ -433,8 +647,12 @@ async function editor(type, id) {try {
 		input('i', "Icon", I_FILE);
 		//s:subId, v:vars
 		//TODO Cat fields, subcat fields, custom fields
-		input('_h', "Comment", I_TEXT).c.hidden=!!id;
-	break; case 'v':
+	break; case 'l': //Location
+		await menu('l',"Location");
+		input('n', "Name", I_TEXT);
+		input('d', "Description", I_AREA);
+		input('p', "Parent", 'l');
+	break; case 'v': //Custom Field
 		await menu('v',"Custom Field");
 		input('t', "Type", I_DROP, null, F_TYPE);
 		input('d', "Data Type", I_DROP, null, I_TYPE);
@@ -442,11 +660,9 @@ async function editor(type, id) {try {
 		let i=I.v, ni=input('n', "Name", I_TEXT), ti=mkInput(MB, "Text", I_AREA),
 			fv=mkInput(MB, "Fixed Value", I_SWITCH);
 		ti.c.remove();
-		let sb=utils.mkEl('button', MB, 'btn btn-success', null, "Select Entry");
-		sb.onclick=() => searchMenu(sb.s);
-		i.d.onchange=e => {
-			if(e) i.v.c.remove();
-			let t=Number(i.d.value);
+		i.d.onchange=t => {
+			if(i.v) i.v.c.remove();
+			if(typeof t!=='string') t=Number(i.d.value);
 			if(t===I_LINK) input('v',"URI",I_TEXT);
 			else input('v',"Default Value",t);
 		}
@@ -457,21 +673,19 @@ async function editor(type, id) {try {
 			if(i.i.c.hidden = t==='t'||t==='h'||fv.checked) i.i.value='';
 		}
 		(i.t.onchange=() => {
-			let t=i.t.value;
+			let t=i.t.value, dv=t==='p'||t==='i'||t==='l'||t==='u';
 			if(fv.c.hidden = t==='t'||t==='h') fv.checked=0;
 			fv.onchange();
 			i.n.c.replaceWith((i.n=t==='t'?ti:ni).c);
 			i.d.c.hidden = t!=='f';
-			if(t==='f') i.d.value=1, i.d.onchange();
-			else i.v.c.remove(), delete i.v, i.d.value='';
-			sb.s=t==='p'||t==='i'||t==='l'||t==='u'?t:0;
-			sb.hidden=!sb.s;
+			if(t==='f'||dv) i.d.onchange(dv?t:0);
+			else i.v&&i.v.c.remove(), delete i.v, i.d.value='';
 		})();
 		OK=async () => {
 			if(!i.i.c.hidden && !i.i.value) throw "Data ID Required";
 			await edit('v',DB._i);
 		}
-	break; case 's':
+	break; case 's': //Settings
 		[D.u, D.w] = await dbGet('s');
 		mkMenu("Settings",1,600);
 		function sUsr() {
@@ -485,6 +699,7 @@ async function editor(type, id) {try {
 		T='u', utils.mkEl('h2',MB,null,null,"User Settings");
 		input('n', "Display Name", I_TEXT);
 		input('e', "Email", I_EMAIL);
+		//TODO Add "Bio"
 		input('c1', "Primary Color", I_COLOR).oninput=sClr;
 		input('c2', "Accent Color", I_COLOR).oninput=sClr;
 		input(0, "Reset Colors", I_LINK).onclick=e => {
@@ -522,6 +737,10 @@ async function editor(type, id) {try {
 		}
 		//TODO On cancel, reset theme
 		//setTheme(LM, 0, '#'+WS[1], '#'+WS[2])
+	break; case 'u': //Contact Info
+		D=await dbGet('u',id);
+		mkMenu("Viewing User");
+		draw(MB,'u',D,1);
 	break; default:
 		throw "Bad View Mode";
 	}
@@ -534,25 +753,24 @@ async function editor(type, id) {try {
 		n=T!=='c'&&mkInput(MB, "Comment", I_TEXT);
 		M_OK.onclick=() => sync(async () => {
 			if(n && n.value) d.push(n.value);
-			await dbGet(...d), hideMenu();
+			await dbGet(...d), hideMenu(1);
 		});
 	}
-	M_CPY.onclick=async () => {
-		id=0,D={},delete MB.m;
-		await menu(T,TN,1).catch(err);
-		I[T]._h.c.hidden=0;
-		MENU.scrollTo({top:0,behavior:'smooth'});
+	if(type!=='c' && type!=='s') {
+		input('_h', "Comment", I_TEXT).c.hidden=!!id;
+		M_CPY.onclick=async () => {
+			id=0,D={},delete MB.m;
+			await menu(T,TN,1);
+			I[T]._h.c.hidden=0;
+			MENU.scrollTo({top:0,behavior:'smooth'});
+		}
 	}
 	showMenu();
 } catch(e) {err(e)}}
 
-//============================================== Item Render ==============================================
-
-//============================================== Item Edit ==============================================
-
 //============================================== Database ==============================================
 
-const R_EX=/[^\w <>,.:;?/\\!@#$^*()"'|_+={}\[\]-]/g, R_JS=/^[\[{]/;
+const R_EX=/[&%]/g, R_JS=/^[\[{]/;
 function _dd(d) {console.debug('->',typeof d==='string'?d.split('&'):d)}
 function _enc(x) {return '%'+x.charCodeAt(0).toString(16).toUpperCase()}
 function _enp(s,b) {
@@ -569,7 +787,7 @@ async function getUri(uri,d,b,sig) {
 		_dd(d), b=tCase(uri.slice(1)), e=`${e}`, u=e.indexOf(':');
 		throw `<b>${b} ${e.slice(0,u+1)}</b> ${e.slice(u+2)}`;
 	}
-	if(r.status===410 && uri==='/db') logout(1);
+	if(r.status===410 && uri==='/db') logout(2);
 	if(r.status!==200) {
 		_dd(d);
 		throw `<b>${tCase(uri.slice(1))} Code ${r.status}:</b> ${b}`;
@@ -602,25 +820,40 @@ function valToBool(v) {
 
 async function setCat(c) {
 	if(!Cat || c!==Cat._id) Cat=typeof c==='string'?await dbGet('c',c):c;
-	O_HL.hidden=(O_LL.hidden=!Usr||!Cat)||!Cat.h||DB._v==='h';
+	O_LL.hidden=!Cat || DB._v[0]==='l', c=!Usr || !Cat;
+	O_HL.hidden=c || !Cat.h || (DB._v==='h'&&DB._i[1]!==',');
+	HHB.hidden=c || !Cat.h || Edit || DB._v!=='p';
 }
 
 //============================================== Support ==============================================
 
-const I_TEXT=1, I_AREA=2, I_EMAIL=3, I_COLOR=4, I_FILE=5,
-I_SWITCH=6, I_LINK=7, I_DROP=8, I_MULTI=9, I_TYPE={};
-I_TYPE[I_TEXT]="Text", I_TYPE[I_AREA]="Text Area", I_TYPE[I_EMAIL]="Email", I_TYPE[I_COLOR]="Color",
-I_TYPE[I_FILE]="Image / File", I_TYPE[I_SWITCH]="Switch", I_TYPE[I_LINK]="Link", I_TYPE[I_DROP]="Dropdown",
-I_TYPE[I_MULTI]="Multi-Select";
+const I_TEXT=1, I_AREA=2, I_EMAIL=3, I_COLOR=4,
+I_FILE=5, I_SWITCH=6, I_LINK=7, I_DROP=8, I_MULTI=9,
+I_TYPE={
+	[I_TEXT]:"Text", [I_AREA]:"Text Area", [I_EMAIL]:"Email", [I_COLOR]:"Color",
+	[I_FILE]:"Image / File", [I_SWITCH]:"Switch", [I_LINK]:"Link", [I_DROP]:"Dropdown",
+	[I_MULTI]:"Multi-Select"
+};
 
 function mkInput(par, name, type, val, opts) {
 	let r=par.id==='MB' && !M_F.hidden, l,i,c,b;
 	switch(type) {
 	case I_TEXT: case I_AREA: case I_EMAIL:
+	case 'p': case 'i': case 'l': case 'u':
 		if(r) r=utils.mkDiv(par), l=utils.mkEl('label',r,'lbl');
+		b=typeof type==='string';
 		i=utils.mkEl(type===I_AREA?'textarea':'input', r||par,
-			'form-control'+(l?' iLbl':''));
+			'form-'+(b?'select fsUA':'control')+(l?' iLbl':''));
 		if(type===I_EMAIL) i.type='email';
+		else if(b) {
+			i.onclick=i.oninput=() => {searchMenu(type,i), i.value=i._v||''}
+			i.set=d => {
+				if(typeof d==='string') {
+					i.value=F_TYPE[type]+" #"+(i._id=d);
+					dbGet(type,d).then(i.set).catch(err);
+				} else i.value=i._v=d._fn||d.n, i._id=d._id;
+			}
+		}
 		i.c=r||i;
 	break; case I_DROP: case I_MULTI:
 		if(r) r=utils.mkDiv(par), l=utils.mkEl('label',r,'lbl');
@@ -689,28 +922,32 @@ function mkInput(par, name, type, val, opts) {
 	break; case I_LINK:
 		i=utils.mkEl('a',par,'iLnk'), i.c=i;
 		i.href=val||'#', i.textContent=name;
-		return i;
-	default:
+	break; default:
 		throw "Unknown input type "+type;
 	}
-	i.title=name;
-	if(l) l.htmlFor=i.id='f'+par.childElementCount, l.textContent=name;
-	else i.placeholder=name;
-	if(type===I_TEXT) i.onblur=() => i.value=tCase(i.value);
-	else if(type===I_AREA || type===I_EMAIL) i.onblur=() => i.value=i.value.trim();
-	if(type===I_AREA) utils.autosize(i,10);
-	if(val) type===I_SWITCH?i.checked=val:i.set?i.set(val):i.value=val;
+	i._t=type;
+	if(type!==I_LINK) {
+		i.title=name;
+		if(l) l.htmlFor=i.id=pUID(), l.textContent=name;
+		else i.placeholder=name;
+		if(type===I_TEXT) i.onblur=() => i.value=tCase(i.value);
+		else if(type===I_AREA || type===I_EMAIL) i.onblur=() => i.value=i.value.trim();
+		if(type===I_AREA) utils.autosize(i,10);
+		if(val) type===I_SWITCH?i.checked=val:i.set?i.set(val):i.value=val;
+	}
 	return i;
 }
 
 function err(e) {
 	console.error(e);
+	if(e.name==='AbortError') return;
 	mkMenu("Error");
 	MB.innerHTML=safeHTML(`<p style='color:red'>${e}</p>`);
 	showMenu();
 }
 
-function mkLink(l,u) {l.href=u,l.onclick=_lClk}
+function setTitle(t) {document.title="NLDB"+(t?' - '+t:'')}
+function mkLink(l,u) {u&&(l.href=u),l.onclick=_lClk}
 function _lClk(e) {e.preventDefault(),go(this.href)}
 
 const R_TU=/_|:|\s+/g, R_TS=/(?=[^a-zA-Z][a-zA-Z])/g;
@@ -735,144 +972,35 @@ function lnkToUri(i,f) {
 function numToClr(n) {return utils.fixedNum(n,6,16).slice(2)}
 function getHSL(hex) {return utils.rgbToHsl(...utils.hexToRgb(hex)).map(n => Math.round(n))}
 
-//============================================== Grabable ==============================================
+//Unique random HTML ID
+let PID=0;
+function pUID() {
+	if(++PID >= 0xFFFFFFFFFFF) PID=0;
+	return '_P'+PID.toString(16);
+}
+
+class TreeError extends Error {
+	constructor(e, ids) {super(e), this.ids=ids, this.name='TreeError'}
+}
+
+function _dName(d) {return '#'+d._id+(d.n?` (${d.n})`:'')}
+function tblToTree(tbl, runFn) {
+	let ids={},d, tf=(n,nd) => {
+		for(d in ids) if((d=ids[d]) && n?d.p===n._id:!d.p) {
+			delete ids[d._id];
+			if(runFn) runFn(d,nd);
+			tf(d,nd+1);
+		}
+	}
+	for(d of tbl) ids[d._id]=d;
+	tf(0,0);
+	if((d=Object.keys(ids)).length) {
+		let s=''; d.forEach((e,i) => s+=(i?', ':'')+_dName(d[i]=ids[e]));
+		throw new TreeError(`Unlinked entities ${s}`,d);
+	}
+}
+
 /*
-function makeGrabable(el,btn,down,up) {
-	let cb=e => {if(down()===false) return;let g=new Grabber(el,e);g.ondrop=up,EditDone=g.cancel}
-	btn.addEventListener('mousedown',cb), btn.addEventListener('touchstart',cb);
-}
-
-function Grabber(el,e,hb) {
-	const par=el.parentElement, rect=el.boundingRect, rects=[],
-	sr=utils.mkDiv(DB,'grabScroll',{top:DB.scrollHeight}),
-	initSX=scrollX, initSY=scrollY, sInd=el.index, self=this;
-	let mX,mY,oX,oY,tNum,sel=null;
-	//Get Initial Cursor/Touch Pos:
-	if(e != null && (e.type == 'touchstart' || e.type == 'mousedown')) {
-		let t=e; if(e.type == 'touchstart') t=e.changedTouches[0], tNum=t.identifier;
-		oX=t.clientX-rect.x, oY=t.clientY-rect.y;
-	}
-	//Create Dropzone Region:
-	const drop=utils.mkDiv(par,'grabInsert',{width:rect.width,height:rect.height}); drop.noGrab=1;
-	//Create Element Container:
-	const cont=utils.mkDiv(null,'grabMoving',{width:rect.width,height:rect.height}), cs=cont.style;
-	cont.noGrab=1; el.remove(); cont.appendChild(el);
-	//Cache Element Sizes/Positions:
-	for(let i=0,c=par.children,l=c.length,re,r; i<l; i++) {
-		re=c[i], r=re.boundingRect.expand(hb||10), r.e=re;
-		if(!re.noGrab || re === drop) rects.push(r);
-	}
-	//Final Setup & Event Listeners:
-	par.appendChild(cont);
-	if(!e || e.type == 'mousedown')
-		addEventListener('mousemove',onDrag,{passive:false}),addEventListener('mouseup',onDrop);
-	if(!e || e.type == 'touchstart')
-		addEventListener('touchmove',onDrag,{passive:false}),addEventListener('touchend',onDrop);
-	addEventListener('keydown', onCancel); onDrag(e);
-	function onDrag(e) {
-		e.preventDefault(); let t=getTouch(e); if(!t) return;
-		mX=t.clientX, mY=t.clientY; if(oX==null) oX=mX-rect.x, oY=mY-rect.y;
-		cs.left=mX-oX, cs.top=mY-oY; findDropRegion(mX+scrollX-initSX, mY+scrollY-initSY);
-	}
-	function onDrop(e) {
-		if(e && !getTouch(e)) return;
-		if(!sel) return onCancel(); else onCancel(true); let d=(sel===drop);
-		if(self.ondrop && self.ondrop.call(self,d?par.childElementCount+1:sel.index) === false)
-			par.insertChildAt(el, sInd);
-		else if(d) par.appendChild(el); else par.insertBefore(el, sel);
-	}
-	function onCancel(noIns) {
-		if(typeof noIns == 'object' && noIns.type == 'keydown' && noIns.key != 'Escape') return;
-		drop.remove(), cont.remove(), el.remove(), sr.remove(),
-		removeEventListener('mousemove', onDrag), removeEventListener('mouseup', onDrop),
-		removeEventListener('touchmove', onDrag), removeEventListener('touchend', onDrop),
-		removeEventListener('keydown', onCancel);
-		if(noIns !== true) { par.insertChildAt(el, sInd); if(self.ondrop) self.ondrop.call(self,-1); }
-	}
-	function findDropRegion(x, y) {
-		drop.remove(); for(let i=0,l=rects.length,r; i<l; i++) {
-			r=rects[i]; if(r.contains(x,y)) {
-				if(r.e === drop) par.appendChild(drop);
-				else try { par.insertBefore(drop, r.e); } catch(err) {return sel=null}
-				return sel=r.e;
-			}
-		}
-		sel=null;
-	}
-	function getTouch(e) {
-		if(e.type == 'touchmove') {
-			let t=e.changedTouches; if(tNum == null) return t[0];
-			for(let i=0,l=t.length; i<l; i++) if(t[i].identifier == tNum) return t[i];
-		} else return e;
-	}
-	this.drop=onDrop, this.cancel=onCancel, this.target=el;
-	if(e) e.preventDefault();
-}
-
-//============================================== Uploader ==============================================
-
-function uploadFile(cb) {
-	let p=utils.mkDiv(DB,'upPop'), c=utils.mkDiv(p,'upClose',null,"Close"),
-	up=new Uploader(null,utils.mkDiv(p,'upBox'));
-	c.onclick=()=>{p.style.opacity=0,setTimeout(()=>{p.remove()},1200)}
-	setTimeout(()=>{p.style.opacity=1},1); up.onFileLoad=(d,f)=>{cb(d,f),c.onclick()}
-}
-
-//Settings:
-const LabelText="<strong>Choose a file</strong> or drag it here.",
-UploadText="<i>Reading File...</i>", DoneText="File Loaded Successfully!",
-ErrorTextL="<i>Error:</i> ", ErrorTextR="!<br><strong>Try Again?</strong>";
-
-/*Callbacks:
-onFileLoad - Called once per file. An error can be returned as a string
-onLoadDone - Called once all files in a drop are processed. An error can be returned as a string*
-
-//HTML5 Upload API v1.3 by Pecacheu
-function Uploader(extList, par, maxFiles, doneMsg) {
-	const self=this; if(!maxFiles) maxFiles=1;
-	//Layout:
-	let fb=utils.mkDiv(par,'upFileBox'), uc=utils.mkDiv(fb,'upContents'), ic=utils.mkDiv(uc,'icon'),
-	lb=utils.mkEl('label',uc), ip=utils.mkEl('input',uc), tx=utils.mkEl('span',uc,null,{display:'none'});
-	ip.type='file',ip.id='upInput'; if(extList) ip.accept=extList.join();
-	lb.setAttribute('for','upInput'); lb.innerHTML=LabelText;
-	//Listeners:
-	fb.ondrag=prv; fb.ondragover=fb.ondragenter=dragOver;
-	fb.ondragleave=fb.ondragend=dragOut; dropRst();
-	function prv(e) {e.preventDefault(),e.stopPropagation()}
-	function dragOver(e) {prv(e),fb.classList.add('upDragOver')}
-	function dragOut(e) {prv(e),fb.classList.remove('upDragOver')}
-	function dropRst() {DB.style.cursor=null, ip.value=null, fb.ondrop=ip.onchange=drop}
-	function drop(e) {
-		fb.ondrop=ip.onchange=null; dragOut(e); txt(UploadText); DB.style.cursor='wait';
-		let f; if(e.type=='drop') f=e.dataTransfer.files; else if(e.type=='change') f=e.target.files;
-		if(!f || !f.length) return txt(LabelText),dropRst();
-		if(f.length>maxFiles) return txt(ErrorTextL+"Too many files"+ErrorTextR),dropRst();
-		setTimeout(()=>{parseNext(f,0)},1);
-	}
-	function parseNext(fl,f) {
-		let e; if(f==fl.length) {
-			if(self.onLoadDone) e=self.onLoadDone.call(self);
-			if(e) txt(ErrorTextL+e+ErrorTextR); else txt(doneMsg||DoneText); dropRst();
-		} else {
-			let n=fl[f].name, r=new FileReader();
-			if(extList && extList.indexOf(n.slice(n.lastIndexOf('.')).toLowerCase()) == -1)
-				return txt(ErrorTextL+"Invalid file type"+ErrorTextR),dropRst();
-			r.readAsBinaryString(fl[f]); r.onload=e => {
-				let d=e.target.result;
-				if(!d) return txt(ErrorTextL+"No data read"+ErrorTextR),dropRst();
-				if(self.onFileLoad) e=self.onFileLoad.call(self,d,fl[f]);
-				if(e) return txt("<i>Error in "+n+":</i> "+e+ErrorTextR),dropRst();
-				parseNext(fl,f+1);
-			}
-		}
-	}
-	function txt(t) {
-		let ls=lb.style, ts=tx.style;
-		if(t==LabelText || t.startsWith("<i>Err")) lb.innerHTML=t, ls.display=null, ts.display='none';
-		else tx.innerHTML=t, ls.display='none', ts.display=null, tx.className=(t==DoneText?'doneAnim':'');
-	}
-}
-
 //============================================== QR Codes ==============================================
 
 function genCode(e,uri,n) {
