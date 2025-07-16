@@ -1,9 +1,10 @@
 //NLDB, Pecacheu 2025. GNU GPL v3
 'use strict';
 
-let Usr, Dat, Cat, Edit, DB, WS, LM,
-LScr, Loader, safeHTML, MStack=[], PageLen;
-const R_UC=/[A-Z]/, LOC_LIM=2000, H_MIN={c:100, h:87};
+let Usr, Dat, Cat, IDCache, Edit, Dty, DB, WS, LM, LT, LScr,
+Loader, safeHTML, MStack=[], NavHist=[], PageLen;
+const R_UC=/[A-Z]/, LOC_LIM=5000, IDCMaxAge=3600000, //1h
+H_MIN={p:56, l:56, c:100, h:87};
 
 //============================================== UI & Nav ==============================================
 
@@ -22,10 +23,11 @@ onload=() => {try {
 	let lp=!('MENU' in window), ck=utils.getCookies();
 	//User
 	Usr=ck.u||localStorage.getItem('u');
-	if(!ck.k) logout();
-	else if(!lp && Usr) {
-		Usr=JSON.parse(Usr), getNS();
-		if(ck.u) utils.remCookie('u'), localStorage.setItem('u',ck.u);
+	if(ck.u) utils.remCookie('u');
+	if(!lp && Usr) {
+		Usr=JSON.parse(Usr);
+		if(ck.k) Usr.k=ck.k; else if(Usr.k) utils.setCookie('k',Usr.k);
+		localStorage.setItem('u', JSON.stringify(Usr)), getNS();
 	}
 	//Workspace & Theme
 	if(!(WS=ck.w)) throw "Failed to load workspace (Check your cookie settings)";
@@ -39,20 +41,19 @@ onload=() => {try {
 	}
 	//HTML Parser
 	let h=HtmlSanitizer;
-	h.AllowedSchemas.splice(0,100,'/?p:','/?u:','/?l:','https:','data:');
+	h.AllowedSchemas.splice(0,100,'/?p:','/?i:','/?l:','/?u:','https:','data:');
 	delete h.AllowedAttributes.id, delete h.AllowedTags.DIV;
 	safeHTML=h.SanitizeHtml;
 	//Header
 	SHB.onclick=() => searchMenu();
 	MHB.onclick=userMenu;
-	HHB.onclick=() => go('?h:p,'+DB._i);
 	BACK.onclick=async () => {
-		if(Dat && (Edit || Dat.dty)) {
+		if(Dat && (Edit||Dty)) {
 			setEdit(0);
-			if(Dat.dty) delete Dat.dty, utils.onNav();
+			if(Dty) Dty=0, utils.onNav(1);
 		} else goBack();
 	}
-	EDIT.onclick=() => {Edit?editor(NE_TYPE[DB._v]):setEdit(1)}
+	EDIT.onclick=() => {Edit||DB._v[0]==='l'?editor(NE_TYPE[DB._v]):setEdit(1)}
 	//Menu
 	MENU.bs=new bootstrap.Modal(MENU), OC.bs=new bootstrap.Offcanvas(OC);
 	MENU.addEventListener('hide.bs.modal', e => {
@@ -65,7 +66,7 @@ onload=() => {try {
 	MENU.addEventListener('hidden.bs.modal', () => {
 		if(MENU.a===1) return MENU.bs.show(),MENU.a=0;
 		M_OK.onclick=M_DEL.onclick=M_CPY.onclick=null;
-		MB.textContent='', MENU.w=0;
+		MB.textContent='', MENU.w=Dty=0;
 	});
 	MENU.addEventListener('shown.bs.modal', () => {
 		if(MENU.a===2) MENU.bs.hide(),MENU.a=0;
@@ -73,7 +74,7 @@ onload=() => {try {
 	CFG.onclick=() => editor(DB._v, DB._i);
 	O_LL.onclick=() => go('?lt:'+Cat._id,2);
 	O_HL.onclick=() => go('?h:'+Cat._id,2);
-	O_TH.onclick=() => {setTheme(LM?0:1,1),userMenu()}
+	O_TH.onclick=() => {setTheme(LM>1?(LM===3?2:3):(LM?0:1),1),userMenu()}
 	O_SE.onclick=() => editor('s');
 	O_LI.onclick=() => go('/login',1);
 	O_LO.onclick=() => {
@@ -89,7 +90,7 @@ onload=() => {try {
 
 function setTheme(lm, upd, c1, c2) {
 	if(upd) localStorage.setItem('t',lm);
-	DB.setAttribute('data-bs-theme',lm?'light':'dark');
+	DB.setAttribute('data-bs-theme', lm===1||lm===3?'light':'dark');
 	if(c1) {
 		c1=getHSL(c1), c2=getHSL(c2);
 		DB.style.setProperty('--h1', c1[0]);
@@ -97,7 +98,7 @@ function setTheme(lm, upd, c1, c2) {
 		DB.style.setProperty('--h2', c2[0]);
 	}
 	DB.mt.content=DB.tc=getComputedStyle(DB).getPropertyValue('--hdr-bg');
-	LM=lm;
+	DB.classList.toggle('retro', lm>1), LM=lm;
 }
 async function login(e) {
 	e.preventDefault();
@@ -116,10 +117,10 @@ async function login(e) {
 }
 function logout(f) {
 	if(!Usr) f=0;
-	Usr=null; utils.remCookie('k');
+	Usr=null, utils.remCookie('k');
 	localStorage.clear();
 	if(f) { //Refresh View
-		utils.onNav();
+		utils.onNav(1);
 		if(OC.bs._isShown) userMenu();
 	}
 }
@@ -137,8 +138,16 @@ if('visualViewport' in window) {
 	}, {passive:false})
 }
 onresize=() => {
-	DB.classList.toggle('fixed',DB.innerRect.h+48 <= utils.h);
-	if(MENU.w) MENU.classList.toggle('mSnap',utils.w < MENU.w+56);
+	let h=utils.h;
+	if(DB._v[0]==='l') {
+		let v=CONT.querySelector('.lv'), f=CONT.firstChild;
+		console.log(v?v.boundingRect.h+'px':0);
+		if(f) f.style.paddingBottom = v?v.boundingRect.h+'px':0;
+		if(v) v.classList.toggle('lvFull', v.lastChild.boundingRect.bottom
+			- v.firstChild.boundingRect.y + 200 > h);
+	}
+	DB.classList.toggle('fixed', DB.innerRect.h+48 <= h);
+	if(MENU.w) MENU.classList.toggle('mSnap', utils.w < MENU.w+56);
 	calcPLen();
 }
 onscroll=() => {
@@ -160,44 +169,35 @@ onscroll=() => {
 	if(EditDone) {
 		if(e.key == 'Enter') EditDone(1); else if(e.key == 'Escape') EditDone();
 	} else if(e.key == 'Escape' && !nBack.hidden) nBack.onclick();
-}
-onbeforeunload=() => Edit||Itm&&Itm.dty?"Are you sure?":null;*/
+}*/
+onbeforeunload=() => Dty?"Are you sure?":null;
 
 function calcPLen() {
 	let m=H_MIN[DB._v];
 	PageLen=m?Math.ceil(utils.h/m):10;
 }
 
-utils.onNav = async () => {
+utils.onNav = async f => {
 	let q=location.search.slice(1);
 	DB._lv=DB._v||'';
 	[DB._v, DB._i] = parseNav(DB._q=q);
-	//Loader
-	DB.removeAttribute('load');
-	let ls=LOAD.style, ts=LOAD.firstChild.style, t=setTimeout(() => {
-		ts.animation='lr .8s ease-in infinite', DB.mt.content='#000';
-	},200);
-	ls.display=null, ls.opacity=1;
 	//Header
-	let k=utils.getCookie('k');
-	if(k) utils.setCookie('k',k,-1);
-	else if(Usr) logout();
 	MHB.className=Usr?'user':'';
 	MHB.lastChild.textContent=Usr?Usr.ns:'';
-	EDIT.hidden=(O_SE.hidden=!Usr) || DB._v==='h';
+	EDIT.hidden=(O_SE.hidden=!Usr) || DB._v==='h'
+		|| DB._v==='p' || DB._v==='i';
 	setEdit(Edit,1);
 	//Draw View
-	if(Dat && Dat._ac) Dat._ac.abort();
-	CONT.textContent='',Loader=Dat=0;
+	loadAbort();
+	if(f===1) clear();
 	calcPLen();
 	try {
 		switch(DB._v) {
 			case 'c': await plView(); break;
-			case 'lt': await ltView(); break;
-			case 'l': await locView(); break;
+			case 'p': case 'i': await partView(); break;
+			case 'lt': case 'l': await locView(); break;
 			case 'h': await hlView(); break;
 			case 'ul': await ulView(); break;
-			case 'p': await partView(); break;
 			default:
 				if(q) {await setCat(); throw "Bad Path"}
 				await catView();
@@ -205,35 +205,50 @@ utils.onNav = async () => {
 	} catch(e) {
 		console.error(e);
 		if(e.name==='AbortError') return;
-		setEdit(0), EDIT.hidden=O_HL.hidden=O_LL.hidden=1;
+		setEdit(0), clear(), EDIT.hidden=O_HL.hidden=O_LL.hidden=1;
 		CONT.innerHTML=safeHTML(`<p style='color:red'>${e}</p>`);
 	} finally {
-		onresize(), clearTimeout(t); DB.mt.content=DB.tc;
+		onresize(), clearTimeout(LT);
+		LT=0, DB.mt.content=DB.tc;
+		let ls=LOAD.style, ts=LOAD.firstChild.style;
 		ls.opacity=0, ts.animation=null, ls.zIndex=980;
 		setTimeout(() => ls.display='none',220);
 		DB.setAttribute('load','');
 	}
 }
 
-function go(uri, force) {
-	let o=location.origin, u=new URL(uri,o), s=u.search.slice(1);
-	o=u.origin===o && s;
-	if(Dat && (Edit || Dat.dty)) {
-		if(Dat.dty) return err("You haven't saved your changes! Please press Save or Cancel.");
+function go(uri, force, isBack) {
+	let l=location, o=l.origin, u=new URL(uri,o), s=u.search.slice(1);
+	if(o=u.origin===o) {
+		if(!isBack) { //History for goBack
+			let v=DB._v, p=l.pathname+l.search;
+			if(v[0]==='l') rmHist('l');
+			else if(v==='i'||v==='p') rmHist('i','/?p:'+Dat._id);
+			else rmHist(0,p);
+			NavHist.push(p);
+			if(NavHist.length > 5) NavHist.splice(0,1);
+		}
+		if(force===-1) return history.pushState('','',uri);
+	}
+	o=o&&s;
+	if(Dat && (Edit||Dty)) {
+		if(Dty) return err("You haven't saved your changes! Please press Save or Cancel.");
 		if(o && force!==2) return editor(...parseNav(s));
 		setEdit(0);
 	}
 	if(force===1) location=uri;
-	else if(o && s.startsWith('u:')) editor(...parseNav(s));
+	else if(o && s.startsWith('u:')) viewUser(parseNav(s)[1]);
 	else utils.go(uri);
 }
 
 function goBack() {
-	if(Cat && DB._v!=='c') {
-		if(DB._v==='l') ltSel();
-		else if(DB._lv==='h') go('/?h:'+Cat._id);
-		else go('/?c:'+Cat._id);
-	} else go('/');
+	let v=DB._v,n;
+	if(v==='c') n='/';
+	else if(v==='i' && Dat) rmHist('i',n='/?p:'+Dat._id);
+	else if(NavHist.length) n=NavHist.pop();
+	else n=Cat?'/?c:'+Cat._id:'/';
+	if(n==='/') NavHist=[];
+	go(n,0,1);
 }
 
 function parseNav(q) {
@@ -243,30 +258,36 @@ function parseNav(q) {
 
 function setEdit(e,f) {
 	Edit=e;
+	let ab=e||DB._v[0]==='l';
+	EDIT.innerHTML=`<i class='bi${ab?"'>&#xF4FE":" i20'>&#xF4C8"};</i>`;
+	EDIT.title=ab?"Add":"Edit";
 	BACK.innerHTML=`<i class=bi>&#x${e?'F62A':'F12C'};</i>`;
-	EDIT.innerHTML=`<i class=bi${e?'>&#xF4FE':' style="font-size:20px">&#xF4C8'};</i>`;
-	BACK.title=e?DB._v==='p'?"Cancel":"Done":"Back", EDIT.title=e?"Add":"Edit";
-	BACK.hidden=!DB._q && !e, CFG.hidden=EDIT.hidden || !DB._q || e;
-	SHB.hidden=(MHB.hidden=!(SAVE.hidden=!e||DB._v!=='p'))||!DB._v;
+	BACK.title=e?DB._v==='p'?"Cancel":"Done":"Back";
+	BACK.hidden=!DB._q && !e;
+	CFG.hidden=!Usr || DB._v==='h' || !DB._q || ab;
+	SHB.hidden=!DB._v;
+	SAVE.hidden=1; //TODO For custom editor
+	//MHB.hidden=e&&DB._v==='p'
 	if(!f) setCat(Cat);
 }
 
 //============================================== View Draw ==============================================
 
 async function catView() {
-	setTitle();
+	clear(), setTitle();
 	Dat=await dbGet('cl'), await setCat();
 	if(!Dat.length) return CONT.innerHTML="<i class=na>No categories yet...</i>";
 	let c=utils.mkDiv(CONT,'cl'),d;
 	for(d of Dat) draw(c,'c',d);
 }
 
-async function plView(page=0) {
-	let d=dbGet('pl', DB._i, page, PageLen),c,n;
-	if(page) {
+async function plView(skip=0) {
+	let pl=PageLen, d=dbGet('pl', DB._i, skip, pl),c,n;
+	if(skip) {
 		d=await d, Dat.push(...d.d), n=d.n;
 		c=CONT.firstChild, c.textContent='';
 	} else {
+		clear();
 		d=(await Promise.all([d, setCat(DB._i)]))[0];
 		setTitle(Cat.n), Dat=d.d, n=d.n;
 		if(!Dat.length) return CONT.innerHTML="<i class=na>No parts yet...</i>";
@@ -274,93 +295,96 @@ async function plView(page=0) {
 	}
 	utils.mkEl('h1',c).textContent=Cat.n;
 	for(d of Dat) draw(c,'p',d);
-	if(n) mkLoader(c,page,plView);
+	if(n) mkLoader(c,skip+pl,plView);
 }
 
-async function hlView(page=0) {
+async function hlView(skip=0) {
 	let si=DB._i.split(','), t=si.length===2?si[0]:0, i=si[1]||si[0],
-	d=dbGet('hl', i, page, PageLen),c,n;
-	if(page) {
-		d=await d, Dat.push(...d.d), n=d.n;
+	pl=PageLen, d=dbGet('hl', i, skip, pl),c,n;
+	if(skip) {
+		d=(await Promise.all([d, getCache()]))[0];
+		Dat.push(...d.d), n=d.n;
 		c=CONT.firstChild, c.textContent='';
 	} else {
-		d=[d, dbGet('ul'), setCat(i)];
-		if(t==='p') d.push(dbGet('p',i));
-		d=await Promise.all(d), Dat=d[0].d, n=d[0].n;
-		Dat.u={}, Dat.h={}, si=d[3];
-		for(d of d[1]) Dat.u[d._id]=d; //Cache users
-		Dat.t=(t?F_TYPE[t]+' ':'')+"History: "+(si?si.n:Cat.n);
-		setTitle(Dat.t);
+		clear();
+		d=await d, await setCat(t?d.c:i, 1);
+		Dat=d.d, n=d.n;
+	}
+	//Add deleted parts/locs to cache
+	for(d of Dat) if(d.n && (i=d.p||d.l) && !IDCache[i]) IDCache[i]=d.n;
+	if(!skip) {
+		setTitle(Dat.t=(t?lnkID(i,t,1,1):Cat.n)+": "+(t?F_TYPE[t]+' ':'')+"History");
 		if(!Dat.length) return CONT.innerHTML="<i class=na>No events yet...</i>";
 		c=utils.mkDiv(CONT,'hl');
 	}
-	for(d of Dat) if(d.n&&(i=d.p||d.l)) Dat.h[i]=d.n; //Cache parts/locs
 	utils.mkEl('h1',c).textContent=Dat.t;
 	for(d of Dat) draw(c,'h',d);
-	if(n) mkLoader(c,page,hlView);
+	if(n) mkLoader(c,skip+pl,hlView);
 }
 
 //Location tree
-async function ltView() {
-	let i=DB._i,c,t;
+async function locView() {
+	let i=DB._i, v=DB._v, c=CONT.querySelector('.lt'),t;
+	//Jump to item
+	if(c) {
+		if(v==='l') for(t of c.children) if(t._d && t._d._id===i) return lvSel(t,1);
+		if(v==='lt' && i===Dat._id) return lvSel(0,1);
+	}
+	//Full reload
+	clear();
 	Dat=await dbGet('ll', i, 0, LOC_LIM);
 	await setCat(Dat.c||i);
-	setTitle(t="Locations: "+Cat.n);
+	setTitle(t=Cat.n+": "+S_TABS.l);
 	if(!Dat.d.length) return CONT.innerHTML="<i class=na>No locations yet...</i>";
 	if(Dat.n) return err("Too many locations to parse!");
 	c=utils.mkDiv(CONT,'lt');
+	//TODO c.onmouseup=() => {if(DB._v==='l') goBack()}
 	utils.mkEl('h1',c).textContent=t;
+	Dat=Dat.d;
 	try {
-		tblToTree(Dat.d, (l,nd) => {
+		tblToTree(Dat, (l,nd) => {
 			let r=draw(c,'l',l,1);
 			r.style.marginLeft=(25*nd)+'px';
-			if(l._id===i) r.r.checked=1;
-			r.r.oninput=() => ltSel(r);
+			if(l._id===i) lvSel(r,1);
+			//r.onmouseup=e => e.stopPropagation();
+			r.r.oninput=() => lvSel(r);
 		});
 	} catch(e) {
 		if(!(e instanceof TreeError)) throw e;
-		CONT.textContent='', console.error(e);
+		clear(), console.error(e);
 		mkMenu("Fix Location Errors?", 1);
 		MB.innerHTML=safeHTML(`<p style='color:red'>${e}</p><p>Moving these locations`+
 			` to the root level should fix the error. Attempt this?</p>`);
 		showMenu();
 		M_OK.onclick=() => e.ids.eachAsync(async d => {
 			await dbPost('lu',d._id,{p:''});
-		}).then(() => {hideMenu(),utils.onNav()}).catch(err);
+		}).then(() => {hideMenu(),utils.onNav(1)}).catch(err);
+		return;
 	}
-}
-function ltSel(r) {
-	if(!r) for(let i of CONT.querySelectorAll('input:checked')) i.checked=0;
-	[DB._v, DB._i] = parseNav(DB._q=r?'l:'+r._d._id:'lt:'+Cat._id);
-	history.pushState('','','/?'+DB._q);
-}
-
-function locView() {
-	//TODO Pick tree or list based on last used view
-	return ltView();
-}
-
-//TODO Get to this view somehow?
-async function ulView() {
-	Dat=await dbGet('ul'), await setCat();
-	let c=utils.mkDiv(CONT,'ul'),d;
-	utils.mkEl('h1',c).textContent="Users";
-	for(d of Dat) draw(c,'u',d);
 }
 
 async function partView() {
-	let d=Dat=await dbGet('p',DB._i),
-	c=utils.mkDiv(CONT,'pv'), td=c, i=Dat.i;
-	await setCat(Dat._c);
-	if(i) {
+	let i=DB._i, v=DB._v, c=CONT.querySelector('.iv'),p;
+	//Jump to item
+	if(c) {
+		if(v==='i') for(p of c.children) if(p._d && p._d._id===i) return ivSel(p,1);
+		if(v==='p' && i===Dat._id) return ivSel(0,1);
+	}
+	//Full reload
+	clear();
+	p=v==='p'?i:(await dbGet('i',i)).p; //TODO Get just part ID
+	Dat=await dbGet('p',p), await setCat(Dat._c);
+	c=utils.mkDiv(CONT,'pv');
+	let td=c, img=Dat.i;
+	if(img) {
 		let tt=utils.mkEl('tr',utils.mkEl('table',c));
-		utils.mkEl('img',utils.mkEl('td',tt)).src=lnkToUri(i);
+		utils.mkEl('img',utils.mkEl('td',tt)).src=lnkToUri(img);
 		td=utils.mkEl('td',tt);
 	}
 	setTitle((Dat.m?Dat.m+' ':'')+Dat.n);
 	utils.mkEl('h1',td).textContent=Dat.n;
 	if(Dat.m) utils.mkEl('h2',td).textContent=Dat.m;
-	if(Dat.d) utils.mkEl('p',c,null,null,safeHTML(Dat.d));
+	if(Dat.d) utils.mkEl('p',c,'desc',null,safeHTML(Dat.d));
 	utils.mkEl('code',c,null,{marginBottom:'1rem',display:'block'}).
 		textContent=JSON.stringify(Dat,null,1);
 	utils.mkEl('h2',c,'hr').textContent=Cat.n;
@@ -369,29 +393,43 @@ async function partView() {
 
 	//Inventory
 	c=utils.mkDiv(CONT,'iv');
-	let r=utils.mkEl('h2',c,'hr itl',null,S_TABS.i);
-	r=utils.mkDiv(r,'bGrp');
-	let b=utils.mkEl('button',r,'rnb',null,"<i class=bi style='font-size:22px'>&#xF292;</i>");
-	b.title="Item History";
-	b=utils.mkEl('button',r,'rnb',null,"<i class=bi>&#xF4FE;</i>");
-	b.title="Add Inventory";
+	let bg=utils.mkEl('h2',c,'hr itl',null,S_TABS.i);
+	bg=utils.mkDiv(bg,'bGrp');
+	let b;
+	if(Cat.h) {
+		b=utils.mkEl('button',bg,'rnb',null,"<i class='bi i22'>&#xF292;</i>");
+		b.title="Event History", b.onclick=() => go('?h:p,'+p);
+	}
+	b=utils.mkEl('button',bg,'rnb',null,"<i class=bi>&#xF4FE;</i>");
+	b.title="Add Inventory", b.onclick=() => editor('i');
+	invView(c,p,0,i);
+}
 
-	b=utils.mkDiv(c,null,null,"<i class=na>Loading...</i>");
-	(async () => {
-		Dat._ac=new AbortController();
-		i=await dbGet(Dat._ac, 'il', DB._i, 0, PageLen);
-		if(Dat !== d) return; //Other view loaded
-		if(!i.length) return b.firstChild.textContent="No stock yet...";
-		b.remove();
-		for(d of i) draw(c,'i',d,1);
-		//TODO Paging
-	})().catch(err);
+//TODO Get to this view somehow?
+async function ulView() {
+	clear();
+	Dat=await dbGet('ul'), await setCat();
+	let c=utils.mkDiv(CONT,'ul'),d;
+	utils.mkEl('h1',c).textContent="Users";
+	for(d of Dat) draw(c,'u',d);
 }
 
 //============================================== Item Draw ==============================================
 
-const T_LOG=[0, "Create Item", "Create Stock", "Create Location",
-	"Delete Item", "Delete Stock", "Delete Location"];
+const T_LOG=[0, "Create Item", "Create Stock", "Create Location", "Delete Item",
+	"Delete Stock", "Delete Location", "Adjust Stock", "Move Stock", "Move Location"];
+
+function lnkID(d, type, noLnk, noFN) {
+	if(!d) return "None";
+	let id=d[type]||d._id||d, s=d.n;
+	if(!s && type!=='i') s=IDCache[id];
+	if(s && noFN && type==='l') {
+		let n=s.lastIndexOf(' - ');
+		if(n!==-1) s=s.slice(n+3);
+	}
+	if(!s) s=type==='u' ? "Unknown User" : F_SHORT[type]+" #"+id;
+	return noLnk?s:`<a href=/?${type}:${id}>${s}</a>`;
+}
 
 function draw(par, type, d, nl) {
 	if(d===0) return;
@@ -410,14 +448,19 @@ function draw(par, type, d, nl) {
 			d.d.length>100?d.d.slice(0,100)+'...':d.d;
 		mkLink(c,`?p:${d._id}`);
 	break; case 'i': //Inventory
-		c=utils.mkEl('a',par,'pc');
-		utils.mkDiv(c,'pcd',null,safeHTML(`${d.q} at <a href=/?l:${d.l}>${d.l}</a>`));
+		c=utils.mkEl(nl?'label':'a',par,'pc');
+		a=nl?'':` of ${lnkID(d.p,'p')}`;
+		utils.mkDiv(c,'pcd',null,safeHTML(`<code>${d.q}</code>${a} at ${lnkID(d.l,'l')}`));
 		if(d.s) utils.mkDiv(c,'pcd',null,"<i class=hcc>S/N</i> "+safeHTML(d.s));
 		for(a of c.querySelectorAll('a')) mkLink(a);
-		if(!nl) mkLink(c,`?p:${d.p}`);
+		if(nl) {
+			c.r=a=utils.mkEl('input',c), a.type='radio', a.name='inv';
+			c.htmlFor=a.id=pUID();
+		} else mkLink(c,`?i:${d._id}`);
 	break; case 'l': //Location
 		c=utils.mkEl(nl?'label':'a',par,'pc');
 		utils.mkEl('h1',c).textContent=d.n;
+		if(!nl && d._fn) utils.mkEl('h4',c,null).textContent=d._fn;
 		if(d.d) utils.mkEl('p',c).textContent =
 			d.d.length>100?d.d.slice(0,100)+'...':d.d;
 		if(nl) {
@@ -425,20 +468,33 @@ function draw(par, type, d, nl) {
 			c.htmlFor=a.id=pUID();
 		} else mkLink(c,`?l:${d._id}`);
 	break; case 'h': //History
-		c=utils.mkEl('p',par,'hc'), a=utils.mkDiv(c);
-		utils.mkEl('b',a).textContent=T_LOG[d.t];
+		c=utils.mkEl('p',par,'hc'), a=utils.mkDiv(c), n=T_LOG[d.t];
+		utils.mkEl('b',a,'ht-'+n[0].toLowerCase()).textContent=n;
 		utils.mkDiv(a,'hcd').textContent=utils.formatDate(new Date(d.d));
-		n=Dat.u[d.u], a=`<a href=/?u:${d.u}>${n?n.n:'Unknown User'}</a> `;
+		a=lnkID(d.u,'u')+' ';
 		switch(d.t) {
 		case 1: //Create Item
-			a+=`created <a href=/?p:${d.p}>${d.n}</a>`;
+			a+=`created ${lnkID(d,'p')}`;
+		break; case 2: //Create Stock
+			a+=`created ${lnkID(d,'i')} with <code>${d.q}</code> `+
+				`of ${lnkID(d.p,'p')} at ${lnkID(d.l,'l')}`;
 		break; case 3: //Create Location
-			a+=`created <a href=/?l:${d.l}>${d.n}</a>`;
-			if(d.pl) a+=` at <a href=/?l:${d.pl}>${Dat.h[d.pl]||'Loc #'+d.pl}</a>`;
+			a+=`created ${lnkID(d,'l')}`;
+			if(d.h) a+=` in ${lnkID(d.h,'l')}`;
 		break; case 4: //Delete Item
-			a+=`deleted ${Dat.h[d.p]||'Part #'+d.p}`;
+			a+=`deleted ${lnkID(d,'p',1)}`;
+		break; case 5: //Delete Stock
+			a+=`deleted ${lnkID(d,'i',1)} of ${lnkID(d.p,'p')}`;
 		break; case 6: //Delete Location
-			a+=`deleted ${Dat.h[d.l]||'Loc #'+d.l}`;
+			a+=`deleted ${lnkID(d,'l',1)}`;
+		break; case 7: //Adjust Stock
+			a+=`changed ${lnkID(d,'i')} of ${lnkID(d.p,'p')} from `+
+				`<code>${d.o}</code> to <code>${d.h}</code>`;
+		break; case 8: //Move Stock
+			a+=`moved ${lnkID(d,'i')} of ${lnkID(d.p,'p')} from `+
+				`${lnkID(d.o,'l')} to ${lnkID(d.h,'l')}`;
+		break; case 9: //Move Location
+			a+=`moved ${lnkID(d,'l',0,1)} from ${lnkID(d.o,'l')} to ${lnkID(d.h,'l')}`;
 		break; default:
 			n=utils.copy(d,1);
 			delete n._id, delete n.d, delete n.c;
@@ -451,10 +507,12 @@ function draw(par, type, d, nl) {
 		c=nl?par:utils.mkEl('a',par,'pc');
 		a=utils.mkEl('h1',c);
 		if(!nl) a.innerHTML=`<i class=bi>&#xF4CF;</i> `;
-		utils.addText(a,d.n);
-		a=utils.mkEl(nl?'a':'p',c), a.textContent=d.e;
+		utils.addText(a,d.n), a=utils.mkEl('p',c);
+		if(nl) a=utils.mkEl('a',a);
+		a.textContent=d.e;
 		if(nl) a.href="mailto:"+d.e;
 		else mkLink(c,`?u:${d._id}`);
+		if(d.b) utils.mkEl('p',c,'desc',null,safeHTML(d.b));
 	break; default:
 		c=utils.mkEl('p',par,'pc');
 		c.textContent=JSON.stringify(d);
@@ -463,23 +521,94 @@ function draw(par, type, d, nl) {
 	return c;
 }
 
+function lvSel(r,nh) {
+	loadAbort();
+	if(r) r.r.checked=1;
+	else for(let i of CONT.querySelectorAll('input:checked')) i.checked=0;
+	if(nh!==1) {
+		[DB._v, DB._i] = parseNav(DB._q=r?'l:'+r._d._id:'lt:'+Cat._id);
+		if(nh===2) rmHist('l');
+		go('/?'+DB._q, -1, nh===2);
+	}
+	//Location View
+	let c=CONT.querySelector('.lv');
+	if(!r) return c&&c.remove(),onresize();
+	let d=r._d;
+	if(c) c.textContent=''; else c=utils.mkDiv(CONT,'lv');
+	let h=utils.mkEl('h1',c,'hr itl itlBar'), bg=utils.mkDiv(h,'bGrp');
+	let b=utils.mkEl('button',bg,'rnb',null,"<i class='bi i22t'>&#xF282;</i>");
+	b.title="Close", b.onclick=() => lvSel(0,2);
+	utils.mkDiv(bg).textContent=d.n;
+
+	bg=utils.mkDiv(h,'bGrp');
+	if(Cat.h) {
+		b=utils.mkEl('button',bg,'rnb',null,"<i class='bi i22'>&#xF292;</i>");
+		b.title="Event History", b.onclick=() => go('?h:l,'+DB._i);
+	}
+	b=utils.mkEl('button',bg,'rnb',null,"<i class='bi i22'>&#xF4CA;</i>");
+	b.title="Update", b.onclick=() => editor('l',DB._i);
+	b=utils.mkEl('button',bg,'rnb',null,"<i class=bi>&#xF4FE;</i>");
+	b.title="Add Child", b.onclick=() => editor('l',0);
+
+	if(d._fn) utils.mkEl('h2',c).textContent=d._fn;
+	if(d.d) utils.mkEl('p',c,'desc',null,safeHTML(d.d));
+	let setSize=() => {onresize(), r.scrollIntoView()};
+	invView(c, DB._i, setSize), setSize();
+}
+
+function ivSel(r,nh) {
+	loadAbort();
+	if(r) r.r.checked=1;
+	else for(let i of CONT.querySelectorAll('input:checked')) i.checked=0;
+	if(!nh) {
+		[DB._v, DB._i] = parseNav(DB._q=r?'i:'+r._d._id:'p:'+Dat._id);
+		go('/?'+DB._q,-1);
+	}
+}
+
+function invView(c, id, cb, sel) {
+	let fn, od=Dat, nl=c.className==='iv',
+	ld=utils.mkDiv(c,null,null,"<i class=na>Loading...</i>");
+	(fn=async (skip=0) => {
+		Dat._ac=new AbortController();
+		let d, pl=PageLen, il=(await Promise.all([
+			dbGet(Dat._ac, 'il', id, skip, pl), getCache()]))[0];
+		if(Dat !== od) return; //Other view loaded
+		if(!il.d.length) return ld.firstChild.textContent="No stock yet...";
+		ld.remove();
+		for(d of il.d) {
+			let r=draw(c,'i',d,nl);
+			if(nl) {
+				if(d._id===sel) ivSel(r,1);
+				r.r.oninput=() => ivSel(r);
+			}
+		}
+		if(il.n) mkLoader(c, skip+pl, fn);
+		if(cb) cb();
+	})().catch(err);
+}
+
 //Loads more on scroll
-function mkLoader(par, page, loadFn) {
+function mkLoader(par, skip, loadFn) {
 	let l=Loader=utils.mkDiv(par,'scr',null,"<div>.</div>"), t=l.firstChild;
 	l._load=() => {
 		if(l.l) return;
-		loadFn(page+1).catch(err).then(() => {l.remove(),clearInterval(l.l)});
+		loadFn(skip).catch(err).then(() => {l.remove(),clearInterval(l.l)});
 		l.l=setInterval(() => {
 			if(Loader !== l) clearInterval(l.l);
 			if((t.textContent+='.').length>3) t.textContent='.';
 		},250);
 	}
 }
+function loadAbort() {
+	if(Dat && Dat._ac) Dat._ac.abort(), delete Dat._ac;
+}
 
 //============================================== Menus ==============================================
 
 const S_TABS={a:"All", p:"Parts", i:"Inventory", l:"Locations", u:"People"},
 F_TYPE={f:"Field", h:"Heading", t:"Text", p:"Item", i:"Inventory", l:"Location", u:"User"},
+F_SHORT={p:"Part", i:"Inv", l:"Loc", u:"User"},
 NE_TYPE={'':'c', c:'p', p:'v', lt:'l', l:'l'};
 
 function mkMenu(name, btns, width, nc) {
@@ -518,7 +647,7 @@ function searchMenu(sel='a', iRes) {
 		if(Cat._sq) s.value=Cat._sq;
 		if(Cat._sr) res(Cat._sr, sel);
 	}
-	tl.t=sel, tl.s=s, s.onblur=null;
+	tl.t=sel, tl.s=s;
 	s.oninput=async () => {try {
 		if(ns) return ns=2;
 		ns=1, setTimeout(() => {
@@ -547,7 +676,11 @@ function searchMenu(sel='a', iRes) {
 		}
 	}
 	showMenu();
-	setTimeout(() => s.focus(),200);
+	//Focus Search Bar
+	let st,sb,ct=() => {clearInterval(st),st=0}
+	s.onfocus=() => {if(st && !sb) sb=setTimeout(ct,500)}
+	s.onblur=() => {clearTimeout(sb),sb=0}
+	st=setInterval(() => {s.focus(); if(MB.firstChild !== s) ct()},10);
 }
 function sTab(e) {
 	e.preventDefault();
@@ -559,32 +692,40 @@ function sTab(e) {
 function userMenu() {
 	if(Usr) O_USR.textContent=`Logged in as ${Usr.n}`;
 	O_LI.hidden=!(O_USR.hidden=O_LO.hidden=!Usr);
-	O_TH.innerHTML=`<i class=bi>&#x${LM?"F497;</i><span>Dark Mode":
+	O_TH.innerHTML=`<i class=bi>&#x${LM===1||LM===3?"F497;</i><span>Dark Mode":
 		"F5A2;</i><span>Light Mode"}</span>`;
 	OC.bs.show();
 }
 
 async function editor(type, id) {try {
+	Dty=1;
 	let T,TN,D={},I={},OK;
 	async function menu(t,tn,nc) {
 		T=t,TN=tn; if(id) D[t]=await dbGet(t,id);
-		mkMenu(id?"Updating "+D[t].n:"New "+tn,
+		mkMenu(id?"Updating "+(D[t].n||tn):"New "+tn,
 			id?type!=='c'?3:2:1, 650, nc);
 	}
 	function input() {
-		let a=arguments, k=Array.prototype.splice.call(a,0,1);
+		let a=arguments, k=Array.prototype.splice.call(a,0,1)[0];
 		a[2]=D[T]&&D[T][k]||a[2]; if(a.length<3) a.length=3;
 		a=mkInput(MB, ...a);
 		if(k) (I[T]||(I[T]={}))[k]=a;
 		return a;
 	}
-	async function sync(f) {
+	async function sync(f,del) {
 		M_OK.disabled=1;
 		await f().then(r => {
 			hideMenu();
-			if(T==='c') Cat=0;
-			if(typeof r==='string') setEdit(0),go(`?${type}:${r}`);
-			else utils.onNav();
+			if(T==='c') setCat(); else IDCache=0;
+			if(del || typeof r==='string') {
+				clear();
+				if(del) switch(type) {
+					case 'i': go(`?p:${Dat._id}`); break;
+					case 'p': go(`?c:${Cat._id}`); break;
+					case 'l': go(`?lt:${Cat._id}`); break;
+					default: go('/');
+				} else setEdit(0),go(`?${type}:${r}`);
+			} else utils.onNav(1);
 		}).catch(err);
 		M_OK.disabled=0;
 	}
@@ -601,7 +742,8 @@ async function editor(type, id) {try {
 			} else if(f._t===I_DROP) {
 				v=f.value;
 				if(Number.isFinite(b=Number(v))) v=b;
-			} else if(typeof f._t==='string') v=f._id;
+			} else if(f._t===I_NUM) v=f.num;
+			else if(typeof f._t==='string') v=f._id;
 			else {
 				v=f.value;
 				switch(f.type) {
@@ -635,9 +777,9 @@ async function editor(type, id) {try {
 		await menu('c',"Category");
 		input('n', "Name", I_TEXT);
 		input('h', "Track History", I_SWITCH, D.c?D.c.h:1);
-		input('i', "Separate Items & Inventory", I_SWITCH, D.c?D.c.i:1);
-		c=input('e', "External Locations", I_MULTI, null, cl);
-		if(!cd.length) c.parentElement.hidden=1;
+		//TODO input('i', "Separate Items & Inventory", I_SWITCH, D.c?D.c.i:1);
+		//TODO c=input('e', "External Locations", I_MULTI, null, cl);
+		//if(!cd.length) c.parentElement.hidden=1;
 		//TODO Cat custom fields
 	break; case 'p': //Part
 		await menu('p',"Part");
@@ -647,11 +789,18 @@ async function editor(type, id) {try {
 		input('i', "Icon", I_FILE);
 		//s:subId, v:vars
 		//TODO Cat fields, subcat fields, custom fields
+	break; case 'i': //Inventory
+		await menu('i',"Inventory of "+Dat.n);
+		input('q', "Quantity", I_NUM, null, {min:1});
+		input('l', "Location", 'l');
+		input('s', "S/N", I_TEXT);
+		//TODO Cat fields, subcat fields, custom fields
+		OK=() => edit(T, id?0:Dat._id);
 	break; case 'l': //Location
 		await menu('l',"Location");
 		input('n', "Name", I_TEXT);
 		input('d', "Description", I_AREA);
-		input('p', "Parent", 'l');
+		input('p', "Parent", 'l', id===0?DB._i:null);
 	break; case 'v': //Custom Field
 		await menu('v',"Custom Field");
 		input('t', "Type", I_DROP, null, F_TYPE);
@@ -681,39 +830,39 @@ async function editor(type, id) {try {
 			if(t==='f'||dv) i.d.onchange(dv?t:0);
 			else i.v&&i.v.c.remove(), delete i.v, i.d.value='';
 		})();
-		OK=async () => {
+		OK=() => {
 			if(!i.i.c.hidden && !i.i.value) throw "Data ID Required";
-			await edit('v',DB._i);
+			return edit('v',DB._i);
 		}
 	break; case 's': //Settings
 		[D.u, D.w] = await dbGet('s');
 		mkMenu("Settings",1,600);
-		function sUsr() {
+		let lmo=LM, sUsr=() => {
 			Usr.e=I.u.e.value, Usr.n=I.u.n.value, getNS();
-			localStorage.setItem('u', JSON.stringify({u:Usr.e, n:Usr.n}));
-		}
-		function sClr() {
-			setTheme(LM, 0, I.u.c1.value, I.u.c2.value);
-		}
+			localStorage.setItem('u', JSON.stringify({u:Usr.e, n:Usr.n, k:Usr.k}));
+		}, sClr=upd => setTheme(LM, upd, I.u.c1.value, I.u.c2.value);
 
 		T='u', utils.mkEl('h2',MB,null,null,"User Settings");
 		input('n', "Display Name", I_TEXT);
 		input('e', "Email", I_EMAIL);
-		//TODO Add "Bio"
-		input('c1', "Primary Color", I_COLOR).oninput=sClr;
-		input('c2', "Accent Color", I_COLOR).oninput=sClr;
+		input('b', "Bio", I_AREA);
+		input('c1', "Primary Color", I_COLOR).oninput=() => sClr();
+		input('c2', "Accent Color", I_COLOR).oninput=() => sClr();
 		input(0, "Reset Colors", I_LINK).onclick=e => {
 			I.u.c1.set(D.w.c1), I.u.c2.set(D.w.c2);
 			sClr(), e.preventDefault();
 		}
 		input(0, "Reset Password", I_LINK);
 		//TODO Password reset
+		input(0, "Retro Theme", I_SWITCH, LM>1).oninput=e => {
+			let s=LM===1||LM===3;
+			LM=e.target.checked?(s?3:2):(s?1:0), sClr();
+		}
 
 		if(D.w) {
 			T='w', utils.mkEl('hr',MB);
 			utils.mkEl('h2',MB,null,null,"Workspace Settings");
-			if(!D.w.e) D.w.e='*';
-			input('e', "Email Domain", I_EMAIL);
+			input('e', "Email Domain", I_EMAIL, '*');
 			D.l={i:D.w.i&&"/logo.png"}, T='l';
 			input('i', "Brand Logo", I_FILE, null, 1);
 			T='w';
@@ -721,50 +870,58 @@ async function editor(type, id) {try {
 			input('c1', "Default Primary Color", I_COLOR);
 			input('c2', "Default Accent Color", I_COLOR);
 		}
-		//TODO input(null, "<info icon> Help & About", I_LINK);
 
+		let hl=utils.mkEl('a', MB, 'icon-link-hover', null,
+			"<i class=bi>&#xF431;</i> <span>Help & About</span>");
+		hl.href="/README"; //TODO README
+
+		window.D=D;
 		sUsr(),sClr();
 		OK=async () => {
 			let p=[edit('u')];
 			if(D.w) {
+				if(I.w.e.value==='*') I.w.e.value='';
 				p.push(edit('w'));
 				let l=I.l.i, f=l.files[0];
 				if(f) p.push(getUri('/up?l',f,1));
 				else if(D.w.i && !l.fn) p.push(dbGet('di','l'));
 			}
 			await Promise.all(p);
-			sUsr(),sClr(),userMenu();
+			sUsr(),sClr(1),userMenu();
 		}
 		//TODO On cancel, reset theme
-		//setTheme(LM, 0, '#'+WS[1], '#'+WS[2])
-	break; case 'u': //Contact Info
-		D=await dbGet('u',id);
-		mkMenu("Viewing User");
-		draw(MB,'u',D,1);
+		//setTheme(lmo, 0, '#'+WS[1], '#'+WS[2]);
 	break; default:
 		throw "Bad View Mode";
 	}
 	M_OK.onclick=() => sync(OK||(() => edit(T)));
 	M_DEL.onclick=() => {
-		let n=D[T].n, d=[T+'d',id];
+		let n=D[T].n||F_SHORT[type]+" #"+id, d=[T+'d',id];
 		mkMenu(`Delete ${TN}?`,1);
 		utils.mkEl('p',MB,null,null,safeHTML("Are you sure you want to <span style='color:red'>delete "+
 			n+`</span>${T==='c'?", including <b>all</b> parts and data":""}?`));
-		n=T!=='c'&&mkInput(MB, "Comment", I_TEXT);
+		n=T!=='c' && Cat && Cat.h && mkInput(MB, "Comment", I_TEXT);
 		M_OK.onclick=() => sync(async () => {
 			if(n && n.value) d.push(n.value);
 			await dbGet(...d), hideMenu(1);
-		});
+		},1);
 	}
-	if(type!=='c' && type!=='s') {
-		input('_h', "Comment", I_TEXT).c.hidden=!!id;
+	if(Cat && type!=='v' && type!=='s') {
+		if(!id && Cat.h) input('_h', "Comment", I_TEXT);
 		M_CPY.onclick=async () => {
 			id=0,D={},delete MB.m;
 			await menu(T,TN,1);
-			I[T]._h.c.hidden=0;
+			if(!I[T]._h && Cat.h) input('_h', "Comment", I_TEXT);
 			MENU.scrollTo({top:0,behavior:'smooth'});
 		}
 	}
+	showMenu();
+} catch(e) {err(e)}}
+
+async function viewUser(id) {try {
+	let d=await dbGet('u',id);
+	mkMenu("Viewing User");
+	draw(MB,'u',d,1);
 	showMenu();
 } catch(e) {err(e)}}
 
@@ -818,41 +975,67 @@ function valToBool(v) {
 	return 0;
 }
 
-async function setCat(c) {
-	if(!Cat || c!==Cat._id) Cat=typeof c==='string'?await dbGet('c',c):c;
+async function setCat(c,gc) {
+	let p=[];
+	if(c!==Cat && (!Cat || c!==Cat._id)) {
+		if(typeof c==='string') p.push((async () =>
+			Cat=await dbGet('c',c))()); else Cat=c;
+		if(!gc) IDCache=0;
+	}
+	if(gc) p.push(getCache(c));
+	if(p.length) await Promise.all(p);
 	O_LL.hidden=!Cat || DB._v[0]==='l', c=!Usr || !Cat;
-	O_HL.hidden=c || !Cat.h || (DB._v==='h'&&DB._i[1]!==',');
-	HHB.hidden=c || !Cat.h || Edit || DB._v!=='p';
+	O_HL.hidden=c || !Cat.h || (DB._v==='h' && DB._i[1]!==',');
+}
+
+async function _gc(t) {
+	let d=await dbGet(...arguments);
+	if(d.n) throw "Too many entities of type "+t;
+	return d.d;
+}
+async function getCache(cID) {
+	let d=Date.now(),c;
+	if(IDCache && d-IDCache.d <= IDCMaxAge) return;
+	IDCache=c=await dbGet('ic', cID||Cat._id), c.d=d;
 }
 
 //============================================== Support ==============================================
 
-const I_TEXT=1, I_AREA=2, I_EMAIL=3, I_COLOR=4,
-I_FILE=5, I_SWITCH=6, I_LINK=7, I_DROP=8, I_MULTI=9,
+const I_TEXT=1, I_AREA=2, I_NUM=3, I_EMAIL=4, I_COLOR=5,
+I_FILE=6, I_SWITCH=7, I_LINK=8, I_DROP=9, I_MULTI=10,
 I_TYPE={
-	[I_TEXT]:"Text", [I_AREA]:"Text Area", [I_EMAIL]:"Email", [I_COLOR]:"Color",
-	[I_FILE]:"Image / File", [I_SWITCH]:"Switch", [I_LINK]:"Link", [I_DROP]:"Dropdown",
-	[I_MULTI]:"Multi-Select"
+	[I_TEXT]:"Text", [I_AREA]:"Text Area", [I_NUM]:"Number", [I_EMAIL]:"Email",
+	[I_COLOR]:"Color", [I_FILE]:"Image / File", [I_SWITCH]:"Switch", [I_LINK]:"Link",
+	[I_DROP]:"Dropdown", [I_MULTI]:"Multi-Select"
 };
 
 function mkInput(par, name, type, val, opts) {
 	let r=par.id==='MB' && !M_F.hidden, l,i,c,b;
 	switch(type) {
-	case I_TEXT: case I_AREA: case I_EMAIL:
+	case I_TEXT: case I_AREA: case I_NUM: case I_EMAIL:
 	case 'p': case 'i': case 'l': case 'u':
 		if(r) r=utils.mkDiv(par), l=utils.mkEl('label',r,'lbl');
 		b=typeof type==='string';
 		i=utils.mkEl(type===I_AREA?'textarea':'input', r||par,
 			'form-'+(b?'select fsUA':'control')+(l?' iLbl':''));
-		if(type===I_EMAIL) i.type='email';
+		if(type===I_NUM) {
+			if(!opts) opts={};
+			utils.numField(i, opts.min, opts.max, opts.dm, opts.sym);
+		} else if(type===I_EMAIL) i.type='email';
 		else if(b) {
 			i.onclick=i.oninput=() => {searchMenu(type,i), i.value=i._v||''}
-			i.set=d => {
+			c=utils.mkDiv(c,'fInp');
+			b=utils.mkEl('button',r,'btn tabB',null,"Clear");
+			b.onclick=() => i.set();
+			utils.center(b,'x');
+			(i.set=d => {
 				if(typeof d==='string') {
 					i.value=F_TYPE[type]+" #"+(i._id=d);
 					dbGet(type,d).then(i.set).catch(err);
-				} else i.value=i._v=d._fn||d.n, i._id=d._id;
-			}
+				} else if(d) i.value=i._v=d._fn||d.n, i._id=d._id;
+				else i.value=i._v=i._id='';
+				b.hidden=!d;
+			})();
 		}
 		i.c=r||i;
 	break; case I_DROP: case I_MULTI:
@@ -880,8 +1063,8 @@ function mkInput(par, name, type, val, opts) {
 		i=utils.mkEl('input',c), i.type='file', i.c=r;
 		c=utils.mkDiv(c,'fInp');
 		b=utils.mkEl('button',r,'btn tabB',null,"Clear");
-		utils.center(b,'x');
 		b.onclick=() => {i.value='',i.onchange()}
+		utils.center(b,'x');
 		function ext() {
 			let l=i.type==='file', s=i.style, f=c.firstChild, fs=f.style;
 			if(l) i.value='', i.type='text', fs.opacity=0;
@@ -898,7 +1081,7 @@ function mkInput(par, name, type, val, opts) {
 				utils.mkEl('span',c).textContent=u||"No file chosen";
 				if(opts) return;
 				n=utils.mkEl('button',c,null,null,
-					"<i class=bi style='font-size:24px'>&#xF471;</i>");
+					"<i class='bi i24'>&#xF471;</i>");
 				n.title="External Link", n.onclick=ext;
 			} else c.innerHTML=`<img src='${u}' style='width:100%'>`;
 		}
@@ -946,11 +1129,22 @@ function err(e) {
 	showMenu();
 }
 
+function clear() {
+	//Loader
+	DB.removeAttribute('load');
+	LT=setTimeout(() => {
+		LOAD.firstChild.style.animation='lr .8s ease-in infinite';
+		DB.mt.content='#000', LT=0;
+	},200);
+	let ls=LOAD.style;
+	ls.display=null, ls.opacity=1;
+	CONT.textContent='', Loader=Dat=0;
+}
 function setTitle(t) {document.title="NLDB"+(t?' - '+t:'')}
 function mkLink(l,u) {u&&(l.href=u),l.onclick=_lClk}
-function _lClk(e) {e.preventDefault(),go(this.href)}
+function _lClk(e) {e.preventDefault(),e.stopPropagation(),go(this.href)}
 
-const R_TU=/_|:|\s+/g, R_TS=/(?=[^a-zA-Z][a-zA-Z])/g;
+const R_TU=/_|:|\s+/g, R_TS=/(?=[^a-zA-Z'][a-zA-Z'])/g;
 
 function tCase(s) {
 	if(!(s=s.replace(R_TU,' ').trim())) return ''; s=s.split(R_TS);
@@ -998,6 +1192,10 @@ function tblToTree(tbl, runFn) {
 		let s=''; d.forEach((e,i) => s+=(i?', ':'')+_dName(d[i]=ids[e]));
 		throw new TreeError(`Unlinked entities ${s}`,d);
 	}
+}
+
+function rmHist(t,p) {
+	NavHist.each(h => (t&&h.startsWith('/?'+t))||(p&&h===p)?'!':null);
 }
 
 /*
