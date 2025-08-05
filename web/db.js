@@ -85,11 +85,17 @@ onload=() => {try {
 		if(!Edit) dbGet('lo').then(() => logout(1)).catch(err);
 	}
 	UV.textContent=utils.VER;
+	//Show Error
+	if(WS[3]) {
+		mkMenu("Error during maintenance");
+		utils.mkDiv(MB, null, {color:'red'}).textContent=WS[3];
+		showMenu();
+	}
 } catch(e) {
 	utils.onNav=null;
 	for(let c in utils.getCookies()) utils.remCookie(c);
 	if('localStorage' in window) localStorage.clear();
-	alert(e);
+	alert(e); throw e;
 }}
 
 function setTheme(lm, upd, c1, c2) {
@@ -147,7 +153,7 @@ if('visualViewport' in window) {
 }
 onresize=() => {
 	let h=utils.h;
-	if(DB._v[0]==='l') {
+	if(DB._v && DB._v[0]==='l') {
 		let v=CONT.querySelector('.lv'), f=CONT.firstChild;
 		console.log(v?v.boundingRect.h+'px':0);
 		if(f) f.style.paddingBottom = v?v.boundingRect.h+'px':0;
@@ -825,8 +831,12 @@ async function editor(type, id) {try {
 				pid=await edit('p');
 				if(id) id=Dat._i._id;
 			}
-			await edit(T, id?0:pid);
-			//TODO In single inv, if new inv cmd throws error, delete new part too
+			try {await edit(T, id?0:pid)}
+			catch(e) {
+				//Del part if inv throws err
+				if(!ii && !id) await dbGet('pd',pid);
+				throw e;
+			}
 		}
 	break; case 'l': //Location
 		await menu('l',"Location");

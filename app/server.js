@@ -98,7 +98,7 @@ async function begin() {
 	await mkIndexes(DB.u, [{n:1},{e:1}], {unique:1});
 	if(!await DB.u.findOne({_id:0})) await DB.u.insertOne(WS);
 	setInterval(mLoop, TknCheckInt);
-	await mRun(1);
+	await mLoop(1);
 
 	const rqCb=async (rq,re) => {
 		if(Conf.debug>1) msg("[REQ]",rq.url);
@@ -242,7 +242,9 @@ function dbUnlock(l) {if(Lock && Lock.l===l) Lock.r(),Lock=0}
 
 function WSCk(t) {
 	if(!t) t=WS;
-	return utils.setCookie('w', [VER, numToClr(t.c1), numToClr(t.c2)].join('~'), -1);
+	t=[VER, numToClr(t.c1), numToClr(t.c2)];
+	if(MErr) t.push(MErr);
+	return utils.setCookie('w', t.join('~'), -1);
 }
 
 async function loadCats() {
@@ -389,7 +391,7 @@ async function dbCmd(q,req,res) {
 	if(req===0 && res===0) t={CON:1,e:"Console"};
 	msg("[CMD]", q, t?C_USR(t.e)+` [${C_TKN(k)}]`:'');
 	reqAuth(t,A_RD);
-	if(!t.CON) await waitUnlock();
+	if(!t || !t.CON) await waitUnlock();
 	switch(q[0]) {
 	//-------- Users & Settings --------
 	case 's': //Settings
@@ -540,11 +542,8 @@ async function dbCmd(q,req,res) {
 		d._c=c._id;
 		if(q.p && !c.i) {
 			d._i=d._i[0];
-			if(!d._i) {
-				ltmTrig();
-				throw "Invalid part: Missing inv data "+
-					"(This issue will be resolved automatically)";
-			}
+			if(!d._i) throw `Invalid part: Missing inv data (To fix manually, `+
+				`enable "Separate Items & Inventory" in cat settings)`;
 		}
 		return d;
 	case 'q': //Search
@@ -801,7 +800,7 @@ class TknExpErr extends Error {
 
 function hasAuth(t,lv,cat) {
 	if(lv===A_RD && WS.r) return 1; //Anon read-only
-	if(t.CON===1) return 1; //Console
+	if(t && t.CON===1) return 1; //Console
 	if(!t || !t.k) return; //Bad token
 	return !lv || ((t.a[cat]||t.a.g) & lv);
 }
@@ -886,20 +885,21 @@ async function getAuth(req,q) {try {
 
 //============================================== Maintenance ==============================================
 
-let LTMLast, MR;
+let LTMLast, MErr, MR;
 
 //Trigger manual maintenance
-function ltmTrig() {
+/*function ltmTrig() {
 	if(Date.now()-LTMLast >= LTMDown) mLoop(1);
-}
+}*/
 
 //Run periodic maintenance
 async function mLoop(LTM) {
 	if(MR) return; MR=1;
 	if(!LTM) LTM=Date.now()-LTMLast >= MsDay;
 	if(LTM) await dbLock(LTM={});
-	try {await mRun(LTM)} finally {dbUnlock(LTM),MR=0}
-	//TODO Handle errors during maintenance
+	try {await mRun(LTM)}
+	catch(e) {err(e), MErr=`${e}`, WS._c=WSCk()}
+	finally {dbUnlock(LTM), MR=0}
 }
 async function mRun(LTM) {
 	let now=new Date();
@@ -945,7 +945,7 @@ async function mRun(LTM) {
 	if(LTM) for(let c in CatID) {
 		c=CatID[c];
 		print(`- Checking Cat ${c.n} (#${c._id})`);
-		//if(!(c.m>0 && c.m<256)) throw "Bad Magic "+c.m; //TODO
+		if(!(c.m>0 && c.m<256)) throw "Bad Magic "+c.m;
 		await Promise.all([chkCat(c), chkItems(c), chkInv(c), chkLocs(c)]);
 	}
 	//TODO Auto-purge unused uploaded files
