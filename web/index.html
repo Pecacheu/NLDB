@@ -25,8 +25,8 @@
 <script src=utils.js></script>
 <script src=r/bootstrap.js></script>
 <script src=r/HtmlSanitizer.js></script>
-<!--<script src=r/qrstyle.js></script>
-<script src=r/print.js></script>-->
+<script src=r/qrstyle.js></script>
+<script src=r/print.js></script>
 <script src=db.js></script>
 <!-- Preload -->
 <link rel=preload href=r/type/OpenSansLight.woff2 as=font crossorigin=anonymous>
@@ -34,10 +34,10 @@
 <link rel=preload href=r/type/OpenSansBold.woff2 as=font crossorigin=anonymous>
 <link rel=preload href=r/type/BootstrapIcons.woff2 as=font crossorigin=anonymous>
 <link rel=preload href=r/save.svg as=image crossorigin=anonymous>
-<!--<link rel=preload href=r/qr.svg as=image>-->
+<link rel=preload href=r/qr.svg as=image crossorigin=anonymous>
 </head><body>
 <div id=BG></div><div id=LOAD><div>...</div></div>
-<div id=HDR><button id=BACK></button><button id=CFG title="Update"><i class='bi i22'>&#xF4CA;</i></button><button id=EDIT></button><div id=LOGO></div><div id=HM><button id=SAVE title="Save"><object data=r/save.svg></object></button><button id=SHB title="Search"><i class='bi i20'>&#xF52A;</i></button><button id=MHB title="Menu"><i class='bi i28'>&#xF4DA;</i><span></span></button></div></div>
+<div id=HDR><button id=BACK></button><button id=CFG title="Update"><i class='bi i22'>&#xF4CA;</i></button><button id=EDIT></button><div id=LOGO></div><div id=HM><button id=SAVE title="Save"><object data=r/save.svg></object></button><button id=THB title="Table View"><i class='bi i28'>&#xF479;</i></button><button id=SHB title="Search"><i class='bi i20'>&#xF52A;</i></button><button id=MHB title="Menu"><i class='bi i28'>&#xF4DA;</i><span></span></button></div></div>
 <span id=CONT></span>
 <div id=FTR><img src=logoSml.png><a href=https://github.com/pecacheu/nldb>NLDB <span id=NV></span></a> | Utils <span id=UV></span></div>
 <div id=MENU class="modal fade"><div class=modal-dialog><div class=modal-content><div id=M_H class=modal-header><h1 id=M_T class=modal-title></h1><button class=btn-close data-bs-dismiss=modal></button></div><div id=MB class=modal-body></div><div id=M_F class=modal-footer><button id=M_DEL class="btn btn-danger">Delete</button><button id=M_NC class="btn btn-secondary" data-bs-dismiss=modal>Cancel</button><button id=M_CPY class="btn btn-secondary">Copy...</button><button id=M_OK class="btn btn-primary">OK</button></div></div></div></div>
@@ -46,8 +46,10 @@
 	<div id=OB class=offcanvas-body>
 		<div id=O_USR></div>
 		<button id=O_LI><i class=bi>&#xF1BE;</i><span>Login</span></button>
+		<button id=O_QR><div></div><span>QR Code</span></button>
 		<button id=O_LL><i class=bi>&#xF2D1;</i><span>Locations</span></button>
 		<button id=O_HL><i class=bi>&#xF292;</i><span>History</span></button>
+		<button id=O_UL><i class=bi>&#xF4CF;</i><span>Users</span></button>
 		<button id=O_TH></button>
 		<button id=O_SE><i class=bi>&#xF3E3;</i><span>Settings</span></button>
 		<button id=O_LO><i class=bi>&#xF1C3;</i><span>Log Out</span></button>

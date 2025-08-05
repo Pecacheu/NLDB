@@ -1,7 +1,8 @@
 //NLDB, Pecacheu 2025. GNU GPL v3
-const VER='2.0 Beta 4';
+const VER='2.0 Beta 5';
 
 import fs from 'fs/promises';
+import read from 'readline';
 import path from 'path';
 import http from 'http';
 import https from 'https';
@@ -20,6 +21,9 @@ const ConfFmt={
 	debug:{t:'int',min:0,max:2,req:false},
 	dbUri:{t:'str'},
 	host:{t:'str'},
+	mail:{t:'str'},
+	mailPass:{t:'str'},
+	mailPort:{t:'int',min:0,max:25565},
 	port:{t:'int',min:0,max:25565},
 	sslKey:{t:'str',req:false},
 	sslCert:{t:'str',req:false},
@@ -28,38 +32,43 @@ const ConfFmt={
 	auth:{t:'str',f:"builtin|wildapricot"},
 	authUri:{t:'str',req:"auth==='wildapricot'"},
 	apiKey:{t:'str',req:"auth==='wildapricot'"}
-}, Conf=JSON.parse(await fs.readFile('config.json'));
+}, App=import.meta.dirname,
+Conf=JSON.parse(await fs.readFile(path.join(App, "../config.json")));
 
 schema.checkSchema(Conf, ConfFmt);
 
-const TknCheckInt=3600000, //1h
+const MsMin=60000,
+MsHour=60*MsMin,
+MsDay=24*MsHour,
+TknCheckInt=MsHour,
+LTMDown=5*MsMin,
 LimWaitPoll=100, //.1s
 LimWaitMax=30000/LimWaitPoll, //30s
 NameMax=1000,
 DataMax=10000,
 MaxLogLen=500,
+MaxPageSizeAnon=200,
 MaxPageSize=2000,
-Root=import.meta.dirname,
-Path=path.join(Root, "web"),
-Utils={"utils.js": path.join(Root, "node_modules/raiutils/utils.min.js")},
+Web=path.join(App, "../web"),
+VDir={'utils.js': path.join(App, "node_modules/raiutils/utils.min.js")},
 LogDateFmt={sec:true, suf:false, year:false, df:true},
-SeenFmt={suf:false, year:false, df:true},
+ExpFmt={suf:false, year:false, df:true},
 //Calc Params
-TknExpSec=Conf.tknExpDays*24*3600,
+TknExp=Conf.tknExpDays*MsDay,
+TknExpSec=TknExp/1000,
 MaxUpload=Conf.maxUploadMb*1000000,
-TknExp=TknExpSec*1000,
 SrvOpt=Conf.sslKey?{key:await fs.readFile(Conf.sslKey), cert:await fs.readFile(Conf.sslCert)}:null,
-print=console.log, Usr={}, Tkn={},
+print=console.log,
 //Colors
-C_USR = chalk.yellow, C_TKN = chalk.magenta,
+C_USR = chalk.yellow,
+C_TKN = chalk.magenta,
+C_VAL = chalk.cyan,
 //Rate Limits
 AuthLim = new RateLimiterMemory({points:2, duration:4}),
 UpLim = new RateLimiterMemory({points:10, duration:1});
 
-//Default Workspace Config
-let WS={_id:0, r:true, c1:0xF25D26, c2:0x6ABF40},
-LOvr=1, DB, Cat, CatID, CatMagic, Lock,
-CID, RDU, OAuthUri, TknUri, UsrInfoUri;
+let WS, LOvr=1, DB, Cat, CatID, CatMagic, Usr, Tkn,
+Lock, CID, RDU, OAuthUri, TknUri, UsrInfoUri;
 
 if(Conf.debug>1) router.debug=1;
 
@@ -77,30 +86,25 @@ async function begin() {
 	print("IP:",ips,`OS: ${sysOS}, ${arch}\nCPU: ${cpu}\n\n`+chalk.yellow(`NLDB v${VER}`));
 
 	print("Loading icons...");
-	await fs.mkdir(Path+"/u", {recursive:true});
-	await sharp(Root+"/logoSml.png").metadata(); //Test Sharp
-	await fs.stat(Path+"/logoSml.png").catch(() => {LOvr=0});
+	await fs.mkdir(Web+"/u", {recursive:true});
+	await sharp(App+"/logoSml.png").metadata(); //Test Sharp
+	await fs.stat(Web+"/logoSml.png").catch(() => {LOvr=0});
 
 	print("Loading database...");
 	DB = new mdb.MongoClient(Conf.dbUri).db('nldb');
 	Cat = DB.collection('cat'), DB.u = DB.collection('usr');
-	WS=(await DB.u.findOne({_id:0})) || (await DB.u.insertOne(WS),WS);
-	WS._c=WSCk(), await loadCats();
-	for await(let u of DB.u.find()) {
-		if(!u._id) continue;
-		delete u.p;
-		for(let k in u.k) Tkn[k]=u;
-		Usr[u._id]=u;
-	}
+	await Cat.createIndex({m:1}, {unique:1});
 	await DB.u.createIndex({n:'text', e:'text'});
-	setInterval(dbLoop, TknCheckInt);
-	await dbLoop();
+	await mkIndexes(DB.u, [{n:1},{e:1}], {unique:1});
+	if(!await DB.u.findOne({_id:0})) await DB.u.insertOne(WS);
+	setInterval(mLoop, TknCheckInt);
+	await mRun(1);
 
 	const rqCb=async (rq,re) => {
 		if(Conf.debug>1) msg("[REQ]",rq.url);
 		re.sendDate=false; let r,e;
 		try {(r=await onReq(rq,re))} catch(er) {e=er} finally {
-			dbUnlock(rq); if(r||e) endReq(re,r,e); else router.handle(Path,rq,re,Utils);
+			dbUnlock(rq); if(r||e) endReq(re,r,e); else router.handle(Web,rq,re,VDir);
 		}
 	}
 	(SrvOpt?https.createServer(SrvOpt, rqCb):http.createServer(rqCb)).listen(Conf.port, () => {
@@ -132,6 +136,7 @@ async function onReq(req, res) {
 		delete qc.p;
 		msg("[AUTH]", req.socket.remoteAddress, qc);
 		let k=await getAuth(req,q), t=Tkn[k];
+		if(k==='V') return k;
 		msg(C_USR(t.e), "got new token", C_TKN(k));
 		res.writeHead(307, '', {location:'/', 'set-cookie':
 			[`k=${k};Max-Age=`+TknExpSec+SEC_CK, "u="+JSON.stringify({n:t.n,e:t.e})+SEC_CK]});
@@ -144,7 +149,7 @@ async function onReq(req, res) {
 		let img=sharp(await reqData(req)), ext='.webp', opt,
 		[md,fn] = await Promise.all([
 			img.metadata(),
-			(async () => Path+(ql?"/logo":"/u/"+await UUID.genUUID()))()
+			(async () => Web+(ql?"/logo":"/u/"+await UUID.genUUID()))()
 		]);
 		msg("[UP]", q, fn, md.format, md.width+'x'+md.height, C_USR(t.e));
 		if(ql) ext='.png';
@@ -163,9 +168,9 @@ async function onReq(req, res) {
 		}
 		await Promise.all(q);
 		if(ql) LOvr=1;
-		return ql?1:(fn+ext).slice(Path.length+3);
+		return ql?1:(fn+ext).slice(Web.length+3);
 	} else if(!LOvr && (pn === '/logo.png' || pn === '/logoSml.png')) {
-		await router.serve(Root+pn, req, res);
+		await router.serve(App+pn, req, res);
 		return 2;
 	} else if(pn.startsWith('/u/')) reqAuth(getTkn(req)[0],A_RD);
 	if(pn === '/' || pn === '/login') {
@@ -223,6 +228,7 @@ function endReq(res,r,e) {
 //============================================== Database ==============================================
 
 async function dbLock(l) {
+	if(!l) return;
 	while(Lock && Lock.l!==l) await Lock.p;
 	Lock={l:l}, Lock.p=new Promise(r=>Lock.r=r);
 }
@@ -250,13 +256,30 @@ async function addCat(nc) {
 		_id:id, m:nc.m
 	}
 	await updateCat(c,nc);
+	await c.itm.createIndex({_id:'text', n:'text', d:'text', m:'text'});
+	await c.itm.createIndex({n:1}, {unique:1});
+	await mkIndexes(c.inv, [{p:1},{l:1},{_id:'text', s:'text'}]);
+	await c.inv.createIndex({s:1,p:1}, {unique:1});
+	await mkIndexes(c.loc, [{p:1},{_id:'text', n:'text', _fn:'text'}]);
+	await c.loc.createIndex({n:1}, {unique:1});
 }
 async function updateCat(c,nc) {
 	updateCache(c,nc,CatDataFmt);
-	await c.itm.createIndex({_id:'text', n:'text', d:'text', m:'text'});
-	await [{p:1},{l:1},{_id:'text', s:'text'}].eachAsync(async d => {await c.inv.createIndex(d)});
-	await [{p:1},{_id:'text', n:'text', _fn:'text'}].eachAsync(async d => {await c.loc.createIndex(d)});
-	if(c.h) await [{d:1},{p:1},{i:1},{l:1},{o:1},{h:1}].eachAsync(async d => {await c.log.createIndex(d)});
+	if(c.h) await mkIndexes(c.log, [{t:1},{d:1},{p:1},{i:1},{l:1},{o:1},{h:1}]);
+}
+
+function mkIndexes(db, il, opts) {
+	return il.eachAsync(async d => {await db.createIndex(d,opts)});
+}
+
+async function loadUsrs() {
+	Usr={}, Tkn={};
+	for await(let u of DB.u.find()) {
+		if(!u._id) continue;
+		delete u.p;
+		for(let k in u.k) Tkn[k]=u;
+		Usr[u._id]=u;
+	}
 }
 
 //History Types
@@ -272,7 +295,10 @@ LOG_LM=9, //Move Location		{t:9, d:date, u:userID, l:locID, o:oldLoc, h:newLoc}
 //Arg Types
 T_ID=1, T_ARR=2, T_OBJ=3, T_INT=4,
 //Auth Levels
-A_RD=1, A_USR=2, A_ITM=3, A_UP=4, A_CAT=5, A_WS=6;
+A_RD=2**0, A_USR=2**1, A_ITM=2**2,
+A_UP=2**3, A_CAT=2**4, A_WS=2**5,
+//Auth Defaults
+A_DEF=A_CAT-1, A_MAX=(2**6)-1;
 
 /*
 A_RD	Read Access (Global & Per-cat)
@@ -282,6 +308,9 @@ A_UP	Upload Files (Global only)
 A_CAT	Create & Edit Categories (Global & Per-cat)
 A_WS	Edit Workspace Settings (Global only)
 */
+
+//Default Workspace Config
+WS={_id:0, r:true, a:{g:A_DEF}, c1:0xF25D26, c2:0x6ABF40};
 
 //============================================== Commands ==============================================
 
@@ -293,6 +322,13 @@ IDFmtOpt={t:'str|str',len:[0,11],req:false},
 WSDataFmt={
 	e:{t:'str|str',f:[null,DomainFmt],max:[0,NameMax]}, //Email Domain
 	r:{t:'bool'}, //Anon Read-Only
+	q:{t:'bool'}, //Enable Invite Codes
+	v:{t:'dict',c:{t:'int',min:0}}, //Invite Codes
+	a:{ //Default Auth
+		t:'dict',
+		k:{t:'str|str',len:[11,null],f:[null,'g']},
+		c:{t:'int',min:0,max:A_MAX}
+	},
 	c1:{t:'int',min:0,max:0xFFFFFF}, //Primary Color
 	c2:{t:'int',min:0,max:0xFFFFFF} //Accent Color
 	//i bool: Brand Logo
@@ -302,10 +338,11 @@ WSDataFmt={
 	b:{t:'str',req:false}, //Bio
 	c1:{t:'int',min:0,max:0xFFFFFF}, //Primary Color
 	c2:{t:'int',min:0,max:0xFFFFFF} //Accent Color
+	//a dict{cid|'g': int}: Auth Mask (cat/global)
 	//p str: Pwd Hash
 	//k dict: Tokens
 }, UsrProj={n:1, e:1},
-UsrViewProj={n:1, e:1, b:1},
+UsrViewProj={n:1, e:1, b:1, a:1},
 CatDataFmt={
 	n:{t:'str',min:1,max:NameMax}, //Name
 	h:{t:'bool',req:false}, //Track History
@@ -321,9 +358,10 @@ CatDataFmt={
 	m:{t:'str',max:NameMax,req:false}, //Mfg
 	i:{t:'str',max:NameMax,req:false}, //Icon URI
 	//TODO s:IDFmtOpt, //SubCat ID
-	//_c str: Cat ID
+	//_i dict: Inv Data, if Multi Inv is off
+	//_c uuid: Cat ID
 }, ItmProj={
-	n:1, d:1, m:1, i:1
+	n:1, d:1, m:1, i:1, l:1
 }, InvDataFmt={
 	//p uuid: Part ID
 	l:IDFmt, //Loc ID
@@ -331,6 +369,7 @@ CatDataFmt={
 	s:{t:'str',max:NameMax,req:false}, //SN
 	//d:dateCodeOrPO
 	//TODO v:{t:'dict',c:CVFmt,req:false}
+	//_c uuid: Cat ID
 }, InvProj={
 	p:1, l:1, q:1, s:1
 }, LocDataFmt={
@@ -340,18 +379,17 @@ CatDataFmt={
 	//TODO v:{t:'dict',c:CVFmt,req:false}
 	//v:[uniqueVars]
 	//_fn str: Full Name
+	//_c uuid: Cat ID
 }, LocProj={
 	n:1, d:1, p:1, _fn:1
 };
 
-//TODO Ensure names and altPNs for items are unique in cat
-
 async function dbCmd(q,req,res) {
 	let [t,k]=getTkn(req), id,c,d,j,n;
-	if(req==null && res==null) t={e:'Console'};
+	if(req===0 && res===0) t={CON:1,e:"Console"};
 	msg("[CMD]", q, t?C_USR(t.e)+` [${C_TKN(k)}]`:'');
 	reqAuth(t,A_RD);
-	await waitUnlock();
+	if(!t.CON) await waitUnlock();
 	switch(q[0]) {
 	//-------- Users & Settings --------
 	case 's': //Settings
@@ -369,7 +407,9 @@ async function dbCmd(q,req,res) {
 		reqAuth(t,A_WS);
 		if(q.length !== 2) throw "Bad Args";
 		asType(q,1,T_OBJ,"Data",DataMax);
+		WSDataFmt.v.c.min=Date.now()-3600000; //Set min code exp
 		schema.checkSchema(j=q[1], WSDataFmt, 1);
+		if(j.e) j.e=j.e.toLowerCase();
 		await dbLock(req);
 		d=await DB.u.updateOne({_id:0}, dbSet(j));
 		if(d.matchedCount !== 1) throw "Unknown error";
@@ -384,18 +424,22 @@ async function dbCmd(q,req,res) {
 		}
 		updateCache(WS,j), WS._c=WSCk();
 		return 1;
-	case 'uu': //User Update [data]
-		reqAuth(t,0);
+	case 'su': //Settings Update [data]
+		reqAuth(t,0,0,1);
 		if(q.length !== 2) throw "Bad Args";
 		asType(q,1,T_OBJ,"Data",DataMax);
 		j=q[1];
-		if(j.e) j.e=j.e.trim().toLowerCase();
+		if(j.e) {
+			j.e=j.e.toLowerCase();
+			if(WS.e && !j.e.endsWith('@'+WS.e)) throw "Email not authorized on this domain";
+		}
 		schema.checkSchema(j, UsrDataFmt, 1);
 		d=await DB.u.updateOne({_id:t._id}, dbSet(j));
 		if(d.matchedCount !== 1) throw new TknExpErr();
 		updateCache(t,j);
 		return 1;
 	case 'lo': //Log Out
+		reqAuth(t,0,0,1);
 		await delTkn(k).catch(err);
 		res.writeHead(200,'',{'set-cookie':"k=;Max-Age=0"});
 		res.end(); return 2;
@@ -404,8 +448,8 @@ async function dbCmd(q,req,res) {
 		if(q.length !== 2) throw "Bad Args";
 		if(q[1] === 'l') {
 			if(LOvr) await Promise.all([
-				fs.rm(Path+"/logo.png"),
-				fs.rm(Path+"/logoSml.png")
+				fs.rm(Web+"/logo.png"),
+				fs.rm(Web+"/logoSml.png")
 			]), LOvr=0;
 		} else {
 			//TODO delete image
@@ -425,34 +469,49 @@ async function dbCmd(q,req,res) {
 		d=await Cat.findOne({_id:c._id});
 		if(!d) throw "Cat not found";
 		updateCache(c,d,CatDataFmt);
+		d={...d}, delete d.m;
 		return d;
-	case 'pl': case 'il': case 'll': case 'hl': //List Part/Inv/Loc/Log [cid|pid, skip, pageSize]
-		if(q.length !== 4) throw "Bad Args";
+	//List Part/Inv/Log [cid|pid, skip, pageSize[, extraInfo]] -or- List Loc [cid|pid]
+	case 'pl': case 'il': case 'll': case 'hl':
+		q.l=q[0]==='ll', q.h=q[0]==='hl', n=q.length;
+		if(q.l ? n !== 2 : (n !== 4 && n !== 5)) throw "Bad Args";
 		if(!(c=CatID[q[1]])) {
-			if(q[0]==='il' || q[0]==='hl') c=catFromID(id=q[1]);
-			else if(q[0]==='ll') c=catFromID(q[1]);
+			if(q[0]==='il' || q.h) c=catFromID(id=q[1]);
+			else if(q.l) c=catFromID(q[1]);
 			if(!c) throw "Bad Cat ID";
 		}
-		asType(q,2,T_INT,"Skip");
-		asType(q,3,T_INT,"PageSize");
-		n=q[0]==='hl';
-		reqAuth(t, n?A_ITM:A_RD, c);
+		reqAuth(t, q.h?A_ITM:A_RD, c);
 		j=getOf(q,ItmProj,InvProj,LocProj,0), d=[];
-		if(id) d.push({$match:n ? {$or:[{p:id},{i:id},{l:id},
+		if(id) d.push({$match:q.h ? {$or:[{p:id},{i:id},{l:id},
 			{o:id},{h:id}]} : {$or:[{p:id},{l:id}]}});
-		if(j) d.push({$project:j});
-		d.push({$sort:n?{d:-1}:{n:1}});
-		q[2]=Math.max(q[2],0);
-		q[3]=utils.bounds(q[3],0,MaxPageSize);
-		d.push({$facet:{
-			metadata:[{$count:'c'}],
-			data:[{$skip:q[2]}, {$limit:q[3]}],
-		}});
-		d=(await getTbl(q,c).aggregate(d).toArray())[0];
-		if(n) for(n of d.data) n.d=n.d.getTime();
-		n=!(n=d.metadata[0]) || n.c > q[2]+q[3];
-		d={n:n?1:0, c:c._id, d:d.data};
-		if(d.c===q[1]) delete d.c;
+		d.push({$sort:q.h?{d:-1}:{n:1}});
+		if(!q.l) {
+			//Extra Info
+			q.x=[];
+			if(q.length>4) asType(q,4,T_INT,"ExtraInfo",1);
+			if(q[4] && q[0]==='pl' && !c.i) q.x=[ //Single Inv
+				{$lookup:{from:c.inv.s.namespace.collection,
+					localField:'_i', foreignField:'_id', as:'_i'}},
+				{$project:{...j, _i:{$arrayElemAt:['$_i', 0]}}}
+			];
+			//Paging
+			asType(q,2,T_INT,"Skip");
+			asType(q,3,T_INT,"PageSize");
+			q[2]=Math.max(q[2],0), q[3]=Math.max(q[3],0);
+			utils.bounds(q[3],0,t?MaxPageSize:MaxPageSizeAnon);
+			d.push({$facet:{
+				m:[{$count:'c'}],
+				d:[{$skip:q[2]}, {$limit:q[3]}, ...q.x],
+			}});
+		} else if(j) d.push({$project:j});
+		j=await getTbl(q,c).aggregate(d).toArray(), d={};
+		if(c._id !== q[1]) d.c=c._id; //Send Cat ID if != pid
+		if(!q.l) { //Has Next Page
+			j=j[0];
+			if(!(n=j.m[0]) || n.c > q[2]+q[3]) d.n=1;
+			if(q.h) for(n of j.d) n.d=n.d.getTime(); //Convert Dates to UTC time
+			d.d=j.d;
+		} else d.d=j;
 		return d;
 	case 'ul': //List User
 		reqAuth(t, A_USR);
@@ -463,14 +522,30 @@ async function dbCmd(q,req,res) {
 		reqAuth(t, A_USR);
 		d=await DB.u.findOne({_id:q[1]},{projection:UsrViewProj});
 		if(!d) throw "User not found";
+		if(!hasAuth(t,A_WS)) for(n of Object.keys(d.a)) if(n!=='g') delete d.a[n];
 		return d;
 	case 'p': case 'i': case 'l': case 'h': //Get Part/Inv/Loc/Log [id]
 		if(q.length !== 2) throw "Bad Args";
 		c=catFromID(q[1]);
 		reqAuth(t,A_RD,c);
-		d=await getTbl(q,c).findOne({_id:q[1]});
+		q.p=q[0]==='p';
+		if(q.p && !c.i) { //Single Inv
+			d=(await c.itm.aggregate([
+				{$match:{_id:q[1]}},
+				{$lookup:{from:c.inv.s.namespace.collection,
+					localField:'_i', foreignField:'_id', as:'_i'}}
+			]).toArray())[0];
+		} else d=await getTbl(q,c).findOne({_id:q[1]});
 		if(!d) throw "Entity not found";
-		if(q[0]==='p') d._c=c._id;
+		d._c=c._id;
+		if(q.p && !c.i) {
+			d._i=d._i[0];
+			if(!d._i) {
+				ltmTrig();
+				throw "Invalid part: Missing inv data "+
+					"(This issue will be resolved automatically)";
+			}
+		}
 		return d;
 	case 'q': //Search
 		if(q.length !== 4) throw "Bad Args";
@@ -494,6 +569,11 @@ async function dbCmd(q,req,res) {
 		if(!(c=CatID[q[1]])) throw "Bad Cat ID";
 		reqAuth(t,A_RD,c);
 		d={}, j=[getCache(c,'p',d), getCache(c,'l',d)];
+		if(hasAuth(t, A_USR)) j.push(getCache(0,'u',d));
+		if(c.e) for(n of c.e) {
+			if(!(n=CatID[n])) throw "Bad Ext Cat ID #"+n;
+			if(hasAuth(t,A_RD,n)) j.push(getCache(n,'l',d));
+		}
 		if(hasAuth(t, A_USR)) j.push(getCache(0,'u',d));
 		await Promise.all(j);
 		return d;
@@ -522,7 +602,7 @@ async function dbCmd(q,req,res) {
 		asType(q,2,0,"Name",NameMax);
 		id=(await UUID.genUUID(null,c.m)).toString();
 		d=await Cat.updateOne({_id:q[1]}, {$push:{s:{_id:id, n:q[2]}}});
-		if(d.modifiedCount !== 1) {await loadCats(); throw "Cat not found"}
+		if(d.modifiedCount !== 1) throw "Cat not found";
 		return id;
 	//New Part/Loc [cid, data] -or- New Inv [pid, data] -> id
 	case 'pn': case 'in': case 'ln':
@@ -538,14 +618,18 @@ async function dbCmd(q,req,res) {
 		q.c=getTbl(q,c);
 		if(q[0]==='ln') { //Verify loc tree, calc fn
 			await dbLock(req);
-			d=await q.c.find().toArray();
+			d=await q.c.find({}, {projection:{n:1, p:1}}).toArray();
 			d.push(j), tblToTree(d,0,1);
 		} else if(q.i) { //Verify part ID
 			d=await c.itm.findOne({_id:q[1]});
 			if(!d) throw "Part not found";
+			if(!c.i && d._i) throw "Cannot create inventory in Single Inv mode";
 			j.p=q[1];
 		}
 		await q.c.insertOne(j);
+		if(q.i && !c.i) { //Single Inv
+			await c.itm.updateOne({_id:q[1]}, {$set:{_i:id}});
+		}
 		d=q.i?{q:j.q, p:j.p, l:j.l}:{n:j.n};
 		if(q[0]==='ln' && j.p) d.h=j.p;
 		dbLog(c, getOf(q,LOG_PC,LOG_IC,LOG_LC), id, q[0][0], t, n, d);
@@ -557,8 +641,14 @@ async function dbCmd(q,req,res) {
 		reqAuth(t,A_CAT,c);
 		asType(q,2,T_OBJ,"Data",DataMax);
 		schema.checkSchema(j=q[2], CatDataFmt, 1);
+		if('i' in j) { //Test migration to multi/single inv mode
+			await dbLock(req);
+			q.i=c.i, c.i=j.i;
+			try {await chkItems(c)}
+			catch(e) {c.i=q.i; await chkItems(c); throw e}
+		}
 		d=await Cat.updateOne({_id:q[1]}, dbSet(j));
-		if(d.matchedCount !== 1) {await loadCats(); throw "Cat not found"}
+		if(d.matchedCount !== 1) throw "Cat not found";
 		await updateCat(c,j);
 		return 1;
 	case 'pu': case 'iu': case 'lu': //Part/Inv/Loc Update [id, data]
@@ -570,9 +660,8 @@ async function dbCmd(q,req,res) {
 		schema.checkSchema(j, getOf(q,ItmDataFmt,InvDataFmt,LocDataFmt), 1);
 		q.c=getTbl(q,c);
 		if(q[0]==='lu' && ('n' in j || 'p' in j)) { //Verify loc tree, calc fn
-			console.log("RECALC LOC");
 			await dbLock(req);
-			d=await q.c.find().toArray();
+			d=await q.c.find({}, {projection:{n:1, p:1}}).toArray();
 			let a=d.each(l => l._id===id?l:null);
 			if(!a) throw "Entity not found";
 			q.ol=a.p, updateCache(a,j);
@@ -600,6 +689,17 @@ async function dbCmd(q,req,res) {
 			if('q' in j) dbLog(c, LOG_IA, id, q[0][0], t, n, {p:q.p, o:q.oq, h:j.q});
 		}
 		return 1;
+	case 'uu': //User Update [id, data]
+		if(q.length !== 3) throw "Bad Args";
+		reqAuth(t,A_WS,c);
+		asType(q,2,T_OBJ,"Data",DataMax);
+		schema.checkSchema(j=q[2], {a:WSDataFmt.a});
+		if(q[1]===t._id && !(j.a.g&A_USR && j.a.g&A_WS))
+			throw "Oops, you can't revoke your own admin access!";
+		d=await DB.u.updateOne({_id:q[1]}, dbSet(j)), n=Usr[q[1]];
+		if(d.matchedCount !== 1 || !n) throw "User not found";
+		updateCache(n,j);
+		return 1;
 	//-------- Delete --------
 	case 'cd': //Del Cat [id]
 		reqAuth(t,A_WS);
@@ -622,6 +722,11 @@ async function dbCmd(q,req,res) {
 			let a=await q.c.findOne({_id:id});
 			if(!a) throw "Entity not found";
 			q.p=a.p;
+			if(!c.i) { //Delete part w/ inv in Single Inv
+				await c.itm.deleteOne({_id:q.p});
+			}
+		} else if(q[0]==='pd') {
+			//TODO Delete all inv of part
 		}
 		d=await q.c.deleteOne({_id:id});
 		if(d.deletedCount !== 1) throw "Entity not found";
@@ -637,7 +742,6 @@ function asType(q,i,t,n,max,opt) {
 	let v=q[i];
 	if(t === T_ID) {
 		if(!v || v.length !== UUID.LEN) throw "Bad "+(n||"ID");
-		if(max != null && new UUID(v).getMagic()!==max) throw "Bad Magic in ID";
 	}
 	if(v) q[i]=v=v.trim();
 	if(!v) { if(opt) return; throw n+" Required"; }
@@ -665,13 +769,22 @@ function getCmnt(d) {
 	let h=d._h; delete d._h; return h;
 }
 
-async function search(cat, tkn, type, query) {
+async function search(cat, tkn, type, query, noExt) {
 	if(type==='u' && !hasAuth(tkn,A_USR)) return [type,[]]; //Req A_USR for user search
-	cat=getTbl(type,cat);
 	let o={score:{$meta:'textScore'}, sort:{score:{$meta:'textScore'}}},
 		p=getOf(type,ItmProj,InvProj,LocProj,0,UsrProj);
 	if(p) o.projection=p;
-	return [type, await cat.find({$text:{$search:query}},o).toArray()];
+	let res = getTbl(type,cat).find({$text:{$search:query}},o).toArray();
+	//Search ext locs
+	if(!noExt && type==='l' && cat.e) {
+		res=[res];
+		for(o of cat.e) {
+			if(!(o=CatID[o])) throw "Bad Ext Cat ID #"+o;
+			if(hasAuth(tkn,A_RD,o)) res.push(search(o, tkn, type, query, 1));
+		}
+		res=[].concat(...await Promise.all(res));
+	} else res=await res;
+	return noExt?res:[type, res];
 }
 
 async function getCache(cat, type, dat) {
@@ -688,10 +801,12 @@ class TknExpErr extends Error {
 
 function hasAuth(t,lv,cat) {
 	if(lv===A_RD && WS.r) return 1; //Anon read-only
+	if(t.CON===1) return 1; //Console
 	if(!t || !t.k) return; //Bad token
-	return 1; //TODO check permissions
+	return !lv || ((t.a[cat]||t.a.g) & lv);
 }
-function reqAuth(t,lv,cat) {
+function reqAuth(t,lv,cat,noCon) {
+	if(noCon && t.CON) throw "Console cannot run this command";
 	t=hasAuth(t,lv,cat);
 	if(t==null) throw new TknExpErr("Not logged in");
 	if(!t) throw "Not authorized";
@@ -703,54 +818,6 @@ function getTkn(req) {
 	if(k && !t) throw new TknExpErr();
 	if(t) t.k[k]=new Date();
 	return [t,k];
-}
-
-let RunCtr=0;
-
-//Run periodic maintenance
-async function dbLoop() {
-	let n=new Date(),tk=Object.keys(Tkn),k,t,d,x;
-	print(chalk.dim(chalk.yellow(`[Running maintenance @ ${utils.formatDate(n,LogDateFmt)}]`)));
-	//Expire tokens
-	for(k of tk) {
-		t=Tkn[k], d=t.k[k], x=n-d;
-		print("Token", C_TKN(k), "for", C_USR(t.e),
-			"last seen", chalk.cyan(utils.formatDate(d,SeenFmt)),
-			"expires in", chalk.bold(chalk.blue(Math.ceil((TknExp-x)/3600000)+'h')));
-		if(x >= TknExp) await delTkn(k).catch(err);
-	}
-	//Push token cache to DB
-	tk=Object.keys(Usr);
-	for(k of tk) {
-		d=Usr[k];
-		t=await DB.u.updateOne({_id:k}, {$set:{k:d.k}});
-		if(t.matchedCount !== 1) {
-			print(chalk.red(`User ${d.e} deleted`));
-			for(t in d.k) delete Tkn[t];
-			delete Usr[k];
-		}
-	}
-	//if(++RunCtr >= 5)
-	//TODO Auto-purge unused uploaded files every few runs
-	//Refresh cat cache
-	//Delete non-existent cat IDs from cat enabled locs
-	//Update names in history
-	//Delete inv for part IDs that don't exist
-}
-
-async function genTkn() {
-	let u=await UUID.genUUID(), r=await UUID.randBytes(24);
-	return u.toString()+r.toString('base64url');
-}
-async function delTkn(k) {
-	let t=Tkn[k];
-	if(!t) throw "Token Not Found";
-	delete Tkn[k], delete t.k[k];
-	msg("Token", C_TKN(k), "for", C_USR(t.e), "expired");
-	let u={};
-	u['k.'+k]=1;
-	t=await DB.u.updateOne({_id:t._id}, {$unset:u});
-	if(t.matchedCount !== 1) throw "User not found";
 }
 
 async function getAuth(req,q) {try {
@@ -789,8 +856,14 @@ async function getAuth(req,q) {try {
 		if(r.modifiedCount !== 1) throw "Unknown error";
 	} else { //New User
 		if(b && !q.s) throw '';
-		let id=(await UUID.genUUID()).toString();
-		u={_id:id, e:t.e, c1:WS.c1, c2:WS.c2, k:{[k]:new Date()}};
+		if(WS.q) {
+			if(!q.v) return 'V';
+			if(!WS.v || !WS.v[q.v]) throw "Invalid or expired invite code";
+			await delInvite(q.v);
+		}
+		let id=(await UUID.genUUID()).toString(), a=WS.a;
+		if(!Object.keys(Usr).length) a={g:A_MAX}; //Give first user admin
+		u={_id:id, e:t.e, a:a, c1:WS.c1, c2:WS.c2, k:{[k]:new Date()}};
 		if(b) {
 			let n=t.e.slice(0,t.e.indexOf('@')), x=n.indexOf('.');
 			u.n=n.charAt(0).toUpperCase()+(x!==-1 ? n.slice(1,x)+n.charAt(x+1).toUpperCase() : n.slice(1));
@@ -810,6 +883,155 @@ async function getAuth(req,q) {try {
 	await utils.delay(utils.rand(500,3000));
 	throw e||"Incorrect email or password";
 }}
+
+//============================================== Maintenance ==============================================
+
+let LTMLast, MR;
+
+//Trigger manual maintenance
+function ltmTrig() {
+	if(Date.now()-LTMLast >= LTMDown) mLoop(1);
+}
+
+//Run periodic maintenance
+async function mLoop(LTM) {
+	if(MR) return; MR=1;
+	if(!LTM) LTM=Date.now()-LTMLast >= MsDay;
+	if(LTM) await dbLock(LTM={});
+	try {await mRun(LTM)} finally {dbUnlock(LTM),MR=0}
+	//TODO Handle errors during maintenance
+}
+async function mRun(LTM) {
+	let now=new Date();
+	if(LTM) LTMLast=now.getTime();
+	print(chalk.dim(chalk.yellow(`[Running ${LTM?"long term":''
+		} maintenance @ ${utils.formatDate(now,LogDateFmt)}]`)));
+	//Refresh WS, Cat, Usr cache
+	if(LTM) {
+		await Promise.all([loadCats(), loadUsrs(),
+			async () => WS=await DB.u.findOne({_id:0})]);
+		WS._c=WSCk();
+	}
+	//Expire tokens
+	let k,t,d,x,p=[];
+	for(k of Object.keys(Tkn)) {
+		t=Tkn[k], d=t.k[k], x=now-d;
+		print("Token", C_TKN(k), "for", C_USR(t.e),
+			"last seen", C_VAL(utils.formatDate(d,ExpFmt)),
+			"expires in", chalk.bold(chalk.blue(Math.ceil((TknExp-x)/3600000)+'h')));
+		if(x >= TknExp) p.push(delTkn(k).catch(err));
+	}
+	//Push token cache to DB
+	for(let k of Object.keys(Usr)) {
+		p.push(async () => {
+			let u=Usr[k], r=await DB.u.updateOne({_id:k}, {$set:{k:u.k}});
+			if(r.matchedCount !== 1) {
+				print(chalk.red(`User ${u.e} deleted`));
+				for(r in u.k) delete Tkn[r];
+				delete Usr[k];
+			}
+		});
+	}
+	await Promise.all(p);
+	//Expire invites
+	if(WS.v) for(k in WS.v) {
+		d=new Date(WS.v[k]);
+		if(now > d) {
+			print("Invite", C_TKN(k), "expired", C_VAL(utils.formatDate(d,ExpFmt)));
+			await delInvite(k);
+		}
+	}
+	//Check cats
+	if(LTM) for(let c in CatID) {
+		c=CatID[c];
+		print(`- Checking Cat ${c.n} (#${c._id})`);
+		//if(!(c.m>0 && c.m<256)) throw "Bad Magic "+c.m; //TODO
+		await Promise.all([chkCat(c), chkItems(c), chkInv(c), chkLocs(c)]);
+	}
+	//TODO Auto-purge unused uploaded files
+}
+
+async function chkCat(c) {
+	let lc,u;
+	//Delete invalid cats from Ext Loc list
+	if(c.e) for(lc of c.e) if(!CatID[lc] || lc===c._id) u=1, delete c.e[lc];
+	if(u) await Cat.updateOne({_id:c._id}, {$set:{e:c.e}});
+}
+async function chkItems(c) {
+	let i,m,p=[];
+	for await(i of c.itm.find({}, {projection:{n:1, _i:1}})) try {
+		//Check magic
+		m=new UUID(i._id).getMagic();
+		if(m !== c.m) throw `ID Magic ${m} != Cat Magic ${c.m}`;
+		if(c.i) { //Multi Inv
+			if('_i' in i) p.push(c.itm.updateOne({_id:i._id}, {$unset:{_i:1}}));
+		} else { //Single Inv
+			let il=await c.inv.find({p:i._id}, {projection:{q:1}}).toArray(),q=0;
+			if(!il.length) throw "Part has no inv data";
+			il.each(n => {q+=n.q, p.push(c.inv.deleteOne({_id:n._id}))},1);
+			il=il[0];
+			if(q) p.push(c.inv.updateOne({_id:il._id}, {$set:{q:il.q+q}}));
+			if(i._i !== il._id) p.push(c.itm.updateOne({_id:i._id}, {$set:{_i:il._id}}));
+		}
+		//Update history name
+		if(c.h) p.push(c.log.updateOne({t:LOG_PC, p:i._id}, {$set:{n:i.n}}));
+	} catch(e) {throw `Itm ${i.n} (#${i._id}): `+e}
+	await Promise.all(p);
+}
+async function chkInv(c) {
+	let i,m,ml,p=[];
+	//Check for missing loc
+	ml=await c.loc.findOne({$or:[{n:"Missing"},{n:"Unknown"}]}, {projection:{_id:1}});
+	if(ml) ml=ml._id;
+	for await(i of c.inv.find({}, {projection:{p:1, l:1}})) try {
+		//Check magic
+		m=new UUID(i._id).getMagic();
+		if(m !== c.m) throw `ID Magic ${m} != Cat Magic ${c.m}`;
+		//Check for part/loc
+		if(!await c.itm.findOne({_id:i.p})) {
+			print(`Deleting Inv #${i._id} w/ missing part`);
+			p.push(c.inv.deleteOne({_id:i._id}));
+		} else if(!await c.loc.findOne({_id:i.l})) {
+			print(`Inv #${i._id} has missing loc`);
+			if(!ml) ml=await dbCmd(['ln',c._id,'"n":"Unknown"'],0,0);
+			p.push(c.inv.updateOne({_id:i._id}, {$set:{l:ml}}));
+		}
+	} catch(e) {throw `Inv #${i._id}: `+e}
+	await Promise.all(p);
+}
+async function chkLocs(c) {
+	let ll=await c.loc.find({}, {projection:{n:1, p:1}}).toArray(),m,p=[];
+	tblToTree(ll, l => {try {
+		//Check magic
+		m=new UUID(l._id).getMagic();
+		if(m !== c.m) throw `ID Magic ${m} != Cat Magic ${c.m}`;
+		//Update full name
+		p.push(c.loc.updateOne({_id:l._id}, {$set:{_fn:l._fn}}));
+		//Update history name
+		if(c.h) p.push(c.log.updateOne({t:LOG_LC, l:l._id}, {$set:{n:l.n}}));
+	} catch(e) {throw `Loc ${l.n} (#${l._id}): `+e}},1);
+	await Promise.all(p);
+}
+
+async function genTkn() {
+	let u=await UUID.genUUID(), r=await UUID.randBytes(24);
+	return u.toString()+r.toString('base64url');
+}
+async function delTkn(k) {
+	let t=Tkn[k];
+	if(!t) throw "Token Not Found";
+	delete Tkn[k], delete t.k[k];
+	msg("Token", C_TKN(k), "for", C_USR(t.e), "expired");
+	let u={};
+	u['k.'+k]=1;
+	t=await DB.u.updateOne({_id:t._id}, {$unset:u});
+	if(t.matchedCount !== 1) throw "User not found";
+}
+
+async function delInvite(k) {
+	delete WS.v[k];
+	await DB.u.updateOne({_id:0}, {$unset:{['v.'+k]:1}});
+}
 
 //============================================== Support ==============================================
 
@@ -842,6 +1064,7 @@ function valToBool(v) {
 	case 'boolean': return v;
 	case 'object':
 		if(Array.isArray(v)) return v.length>0;
+		if(v instanceof Object) return Object.keys(v).length>0;
 		return !!v;
 	}
 	return 0;
@@ -914,13 +1137,18 @@ function tblToTree(tbl, runFn, calcFNs) {
 
 await begin();
 
-const R_CS=/[^\s"]+|""|".*?[^\\]"/g;
+//TODO Better cmd line parsing, up arrow support
 
-process.stdin.resume();
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', async cs => {
+const R_CS=/''|'.*?[^\\]'|{.+}|\[.+\]|[^\s]+/g,
+R_CJ=/^'/, R_CR=/\\(')/g;
+
+read.createInterface({input:process.stdin,
+		output:process.stdout}).on('line', async cs => {
 	let c=[],m;
-	while(m=R_CS.exec(cs)) c.push(m[0].startsWith('"')?JSON.parse(m[0]):m[0]);
-	try {print('->',await dbCmd(c))}
+	while(m=R_CS.exec(cs)) {
+		if(R_CJ.test(m=m[0])) m=m.replace(R_CR,'$1');
+		c.push(m);
+	}
+	try {print('->',await dbCmd(c,0,0))}
 	catch(e) {print('->',chalk.red(e.stack||e))}
 });

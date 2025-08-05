@@ -1,0 +1,18 @@
+services:
+  app:
+    build: .
+    container_name: nldb
+    restart: unless-stopped
+    tty: true
+    volumes:
+      - ./web:/nldb/web
+      - ./config.json:/nldb/config.json
+      - /dev/null:/key
+      - /dev/null:/cert
+    ports:
+      - 5050:8080
+  mongo:
+    image: mongo
+    restart: unless-stopped
+    volumes:
+      - ./db:/data/db

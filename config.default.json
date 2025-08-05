@@ -1,0 +1,14 @@
+{
+	"debug": 0,
+	"dbUri": "mongodb://mongo:27017?tls=false",
+	"host": "example.com",
+	"mail": "info@example.com",
+	"mailPass": "pass",
+	"mailPort": 465,
+	"port": 8080,
+	"sslKey": "/key",
+	"sslCert": "/cert",
+	"tknExpDays": 7,
+	"maxUploadMb": 10,
+	"auth": "builtin"
+}
