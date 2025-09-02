@@ -1,5 +1,5 @@
 //NLDB, Pecacheu 2025. GNU GPL v3
-const VER='2.0 Beta 5';
+const VER='2.0 Beta 6';
 
 import fs from 'fs/promises';
 import read from 'readline';
@@ -18,15 +18,15 @@ import 'raiutils';
 
 //Load Config
 const ConfFmt={
-	debug:{t:'int',min:0,max:2,req:false},
+	debug:{t:'int',min:0,max:2,req:0},
 	dbUri:{t:'str'},
 	host:{t:'str'},
 	mail:{t:'str'},
 	mailPass:{t:'str'},
 	mailPort:{t:'int',min:0,max:25565},
 	port:{t:'int',min:0,max:25565},
-	sslKey:{t:'str',req:false},
-	sslCert:{t:'str',req:false},
+	sslKey:{t:'str',req:0},
+	sslCert:{t:'str',req:0},
 	tknExpDays:{t:'float',min:0},
 	maxUploadMb:{t:'int',min:0},
 	auth:{t:'str',f:"builtin|wildapricot"},
@@ -203,14 +203,15 @@ async function limit(rLim, key) {
 }
 
 function endReq(res,r,e) {
-	/*if(re.pn == '/up') { //Log to file
+	/*if(re.pn == '/up') { //TODO Log to file
 		let s=`[${date()}] ${re.un||"Anonymous"} Update `+re.qr;
 		if(e) s+=" Failed: "+e;
 		else if(re.ld) s+=' '+(Array.isArray(re.ld)?'['+re.ld.join(', ')+']':JSON.stringify(re.ld));
 		fs.writeFile("db.log",s+'\n',{flag:'a'},e=>{if(e) msg(chalk.red(e.stack))});
 	}*/
-	if(e instanceof TknExpErr) {
-		res.writeHead(410,'',{'set-cookie':"k=;Max-Age=0"});
+	let te=e instanceof TknExpErr;
+	if(te || e instanceof ConfirmErr) {
+		res.writeHead(te?410:409,'',te?{'set-cookie':"k=;Max-Age=0"}:{});
 		return err(e.message), res.end(e.message);
 	}
 	if(e) err(e);
@@ -228,7 +229,7 @@ function endReq(res,r,e) {
 //============================================== Database ==============================================
 
 async function dbLock(l) {
-	if(!l) return;
+	if(!l || (Lock && Lock.l===l)) return;
 	while(Lock && Lock.l!==l) await Lock.p;
 	Lock={l:l}, Lock.p=new Promise(r=>Lock.r=r);
 }
@@ -300,7 +301,7 @@ T_ID=1, T_ARR=2, T_OBJ=3, T_INT=4,
 A_RD=2**0, A_USR=2**1, A_ITM=2**2,
 A_UP=2**3, A_CAT=2**4, A_WS=2**5,
 //Auth Defaults
-A_DEF=A_CAT-1, A_MAX=(2**6)-1;
+A_DEF=A_CAT-1, A_MAX=(2**6)-1,
 
 /*
 A_RD	Read Access (Global & Per-cat)
@@ -311,18 +312,48 @@ A_CAT	Create & Edit Categories (Global & Per-cat)
 A_WS	Edit Workspace Settings (Global only)
 */
 
+//Field Types
+I_TEXT=1, I_AREA=2, I_NUM=3, I_EMAIL=4, I_COLOR=5,
+I_FILE=6, I_SWITCH=7, I_LINK=8, I_DROP=9, I_MULTI=10,
+I_DATE=11, I_DATETIME=12;
+
 //Default Workspace Config
 WS={_id:0, r:true, a:{g:A_DEF}, c1:0xF25D26, c2:0x6ABF40};
 
 //============================================== Commands ==============================================
 
-const CVFmt={t:'str|int',min:[1,null]},
-DomainFmt="((\\.)?[a-zA-Z0-9-])+",
-EmailFmt="[a-z0-9.!#$%&'`*+/=^_{}|~-]+@"+DomainFmt,
+const URLFmt="((\\.)?[a-zA-Z0-9-])+",
+EmailFmt="[a-z0-9.!#$%&'`*+/=^_{}|~-]+@"+URLFmt,
+URLOpt={t:'str|str',f:[null,URLFmt],max:[0,NameMax]},
 IDFmt={t:'str',len:11},
-IDFmtOpt={t:'str|str',len:[0,11],req:false},
+IDFmtOpt={t:'str|str',len:[0,11],req:0},
+NameFmt={t:'str',min:1,max:NameMax},
+CIDFmt={t:'str',f:'[a-z0-9]+',req:0},
+BoolOpt={t:'bool',req:0},
+CVField={
+	t:{t:'str',f:'f'}, //Val Type
+	i:CIDFmt, //Val Key ID
+	n:NameFmt, //Display Name
+},
+CVFmt={t:'list', min:0, f:[
+	//Field
+	{...CVField, d:{t:'int',min:I_TEXT,max:I_AREA}, v:{t:'str'}},
+	{...CVField, d:{t:'int',val:I_NUM}, m:{t:'float'}, x:{t:'float'},
+		p:{t:'int',min:0}, v:{t:'float'}}, //TODO Dynamic min/max based on m/x
+	{...CVField, d:{t:'int',val:I_EMAIL}, v:{t:'str',f:EmailFmt}},
+	{...CVField, d:{t:'int',val:I_COLOR}, v:{t:'int',min:0,max:0xFFFFFF}},
+	{...CVField, d:{t:'int',val:I_FILE}, v:URLOpt},
+	{...CVField, d:{t:'int',val:I_SWITCH}, v:{t:'bool'}},
+	//TODO I_LINK=8
+	{...CVField, d:{t:'int',val:I_DROP}, v:{t:'str'}, e:BoolOpt, o:{t:'list',c:'str'}},
+	{...CVField, d:{t:'int',val:I_MULTI}, v:{t:'list',c:'str',min:0}, e:BoolOpt, o:{t:'list',c:'str'}},
+	//TODO I_DATE=11, I_DATETIME=12
+	{t:{t:'str',f:'h'}, n:NameFmt}, //Heading
+	{t:{t:'str',f:'t'}, n:{t:'str'}}, //Text
+	{t:{t:'str',f:'p|i|l|u'}, i:CIDFmt, n:NameFmt, v:IDFmtOpt} //Part/Inv/Loc
+]},
 WSDataFmt={
-	e:{t:'str|str',f:[null,DomainFmt],max:[0,NameMax]}, //Email Domain
+	e:URLOpt, //Email Domain
 	r:{t:'bool'}, //Anon Read-Only
 	q:{t:'bool'}, //Enable Invite Codes
 	v:{t:'dict',c:{t:'int',min:0}}, //Invite Codes
@@ -337,7 +368,7 @@ WSDataFmt={
 }, UsrDataFmt={
 	e:{t:'str',f:EmailFmt,max:NameMax}, //Email
 	n:{t:'str',min:2,max:NameMax}, //Nickname
-	b:{t:'str',req:false}, //Bio
+	b:{t:'str',req:0}, //Bio
 	c1:{t:'int',min:0,max:0xFFFFFF}, //Primary Color
 	c2:{t:'int',min:0,max:0xFFFFFF} //Accent Color
 	//a dict{cid|'g': int}: Auth Mask (cat/global)
@@ -346,20 +377,20 @@ WSDataFmt={
 }, UsrProj={n:1, e:1},
 UsrViewProj={n:1, e:1, b:1, a:1},
 CatDataFmt={
-	n:{t:'str',min:1,max:NameMax}, //Name
-	h:{t:'bool',req:false}, //Track History
-	i:{t:'bool',req:false}, //Multi Inv
-	e:{t:'list',c:IDFmt,min:0,req:false}, //Ext Locs
-	//TODO v:{t:'dict',c:{t:'str',min:1},req:false}
-	//s:[subCats]
+	n:NameFmt, //Name
+	h:BoolOpt, //Track History
+	i:BoolOpt, //Multi Inv
+	e:{t:'list',c:IDFmt,min:0,req:0}, //Ext Locs
+	//TODO s:[subCats]
 	//cat.s - _id:id, n:name, v:[varFields]
 }, ItmDataFmt={
-	n:{t:'str',min:1,max:NameMax}, //Name
+	n:NameFmt, //Name
 	//TODO a:[altNames]
-	d:{t:'str',req:false}, //Desc
-	m:{t:'str',max:NameMax,req:false}, //Mfg
-	i:{t:'str',max:NameMax,req:false}, //Icon URI
 	//TODO s:IDFmtOpt, //SubCat ID
+	d:{t:'str',req:0}, //Desc
+	m:{t:'str',max:NameMax,req:0}, //Mfg
+	i:{t:'str',max:NameMax,req:0}, //Icon URI
+	v:CVFmt //Custom Vars
 	//_i dict: Inv Data, if Multi Inv is off
 	//_c uuid: Cat ID
 }, ItmProj={
@@ -368,18 +399,15 @@ CatDataFmt={
 	//p uuid: Part ID
 	l:IDFmt, //Loc ID
 	q:{t:'int',min:1}, //Qty
-	s:{t:'str',max:NameMax,req:false}, //SN
-	//d:dateCodeOrPO
-	//TODO v:{t:'dict',c:CVFmt,req:false}
+	s:{t:'str',max:NameMax,req:0}, //SN
 	//_c uuid: Cat ID
 }, InvProj={
 	p:1, l:1, q:1, s:1
 }, LocDataFmt={
-	n:{t:'str',min:1,max:NameMax}, //Name
-	d:{t:'str',req:false}, //Desc
+	n:NameFmt, //Name
+	d:{t:'str',req:0}, //Desc
 	p:IDFmtOpt, //Parent ID
-	//TODO v:{t:'dict',c:CVFmt,req:false}
-	//v:[uniqueVars]
+	v:CVFmt //Custom Vars
 	//_fn str: Full Name
 	//_c uuid: Cat ID
 }, LocProj={
@@ -573,7 +601,6 @@ async function dbCmd(q,req,res) {
 			if(!(n=CatID[n])) throw "Bad Ext Cat ID #"+n;
 			if(hasAuth(t,A_RD,n)) j.push(getCache(n,'l',d));
 		}
-		if(hasAuth(t, A_USR)) j.push(getCache(0,'u',d));
 		await Promise.all(j);
 		return d;
 	//-------- Create --------
@@ -611,7 +638,7 @@ async function dbCmd(q,req,res) {
 		reqAuth(t,A_ITM,c);
 		if(q.i) asType(q,1,T_ID,"Part ID");
 		asType(q,2,T_OBJ,"Data",DataMax);
-		n=getCmnt(j=q[2]);
+		n=getCmnt(j=q[2]), q.v=getCValDict(j);
 		schema.checkSchema(j, getOf(q,ItmDataFmt,InvDataFmt,LocDataFmt));
 		j._id=id=(await UUID.genUUID(null,c.m)).toString();
 		q.c=getTbl(q,c);
@@ -625,6 +652,8 @@ async function dbCmd(q,req,res) {
 			if(!c.i && d._i) throw "Cannot create inventory in Single Inv mode";
 			j.p=q[1];
 		}
+		checkCVars(j.v);
+		setCVals(q.v, j.v, j);
 		await q.c.insertOne(j);
 		if(q.i && !c.i) { //Single Inv
 			await c.itm.updateOne({_id:q[1]}, {$set:{_i:id}});
@@ -650,12 +679,12 @@ async function dbCmd(q,req,res) {
 		if(d.matchedCount !== 1) throw "Cat not found";
 		await updateCat(c,j);
 		return 1;
-	case 'pu': case 'iu': case 'lu': //Part/Inv/Loc Update [id, data]
-		if(q.length !== 3) throw "Bad Args";
+	case 'pu': case 'iu': case 'lu': //Part/Inv/Loc Update [id, data[, confirm]]
+		if(q.length !== 3 && q.length !== 4) throw "Bad Args";
 		c=catFromID(id=q[1]);
 		reqAuth(t,A_ITM,c);
 		asType(q,2,T_OBJ,"Data",DataMax);
-		n=getCmnt(j=q[2]); //TODO Comment needs option on client side
+		n=getCmnt(j=q[2]), q.v=getCValDict(j);
 		schema.checkSchema(j, getOf(q,ItmDataFmt,InvDataFmt,LocDataFmt), 1);
 		q.c=getTbl(q,c);
 		if(q[0]==='lu' && ('n' in j || 'p' in j)) { //Verify loc tree, calc fn
@@ -667,11 +696,24 @@ async function dbCmd(q,req,res) {
 			tblToTree(d,0,2);
 			q.d=a, j._fn=a._fn;
 		} else if(q[0]==='iu' && ('l' in j || 'q' in j)) { //Get old loc
-			let a=await q.c.findOne({_id:id});
-			if(!a) throw "Entity not found";
-			q.p=a.p, q.ol=a.l, q.oq=a.q;
+			q.a=await q.c.findOne({_id:id});
+			if(!q.a) throw "Entity not found";
+			q.p=q.a.p, q.ol=q.a.l, q.oq=q.a.q;
 		}
-		d=await q.c.updateOne({_id:id}, dbSet(j));
+		q.j=dbSet(j);
+		//Custom vars
+		if(j.v || q.v) {
+			if(j.v) await dbLock(req);
+			let a=q.a;
+			if(!a) {
+				a=await q.c.findOne({_id:id});
+				if(!a) throw "Entity not found";
+			}
+			q.cf=!!q[3];
+			if(j.v) checkCVars(j.v, q, q.j, a);
+			if(q.v) setCVals(q.v, j.v||a.v, q.j, 1);
+		}
+		d=await q.c.updateOne({_id:id}, q.j);
 		if(d.matchedCount !== 1) throw "Entity not found";
 		if(q.d && q.d.c) { //Update fn for all descendants
 			let v,p=[],fn=a => {for(v of a.c) {
@@ -792,10 +834,84 @@ async function getCache(cat, type, dat) {
 	for(d of dl) if(n=d._fn||d.n) dat[d._id]=n;
 }
 
+//============================================== Custom Data ==============================================
+
+function checkCVars(cd, q, j, jOld) {
+	if(!cd) return;
+	let c,o,i,ck={},co={},ce=[];
+	//CV list -> dict by ID
+	if(jOld && jOld.v) for(c of jOld.v) if(c.i) co[c.i]=c;
+	for(c of cd) try {
+		i=c.i; if(!i) continue;
+		if(i in ck) throw "Duplicate ID";
+		ck[i]=c;
+		if(o=co[i]) { //Existing var
+			if(c.t!==o.t || c.d!==o.d) {
+				if(q.cf) o._d=1; else ce.push(o.n);
+			}
+		}
+		//Verify vars schema
+		if(q && q.ltm) schema.checkSchema(c, CVFmt.f);
+	} catch(e) {throw schema.errAt('CV #'+i,e)}
+	if(ce.length)
+		throw new ConfirmErr(`This action will erase values of ${ce.join(', ')}`);
+	//Delete vals for removed vars
+	for(i in co) if(!(i in ck) || co[i]._d) {
+		o='#'+i; if(o in jOld) (j.$unset||(j.$unset={}))[o]=1;
+		o+=':o'; if(o in jOld) (j.$unset||(j.$unset={}))[o]=1;
+	}
+	//Verify vals schema
+	if(q && q.ltm) {
+		cd.ltm={};
+		setCVals(getCValDict(j),cd,{});
+		c=Object.keys(cd.ltm);
+		if(c.length) {
+			print(`Delete ${j.n} (#${j._id}) Unused CVs:`,c);
+			q.ltm.push(q.t.updateOne({_id:j._id}, {$unset:cd.ltm}));
+		}
+	}
+}
+
+function getCValDict(j) {
+	let k,cv;
+	for(k in j) if(k.startsWith('#')) {
+		(cv||(cv={}))[k]=j[k], delete j[k];
+	}
+	return cv;
+}
+function setCVals(cv, cd, j, upd) {
+	if(!cv) return;
+	if(!cd) throw "Custom vals but no var list";
+	let k,v,o,i,c,ck={};
+	//CV list -> dict by ID
+	for(c of cd) if(c.i) ck[c.i]=c;
+	for(k in cv) try {
+		i=k.slice(1), v=cv[k];
+		if(o=i.endsWith(':o')) i=i.slice(0,-2);
+		if(!(c=ck[i])) {
+			if(cd.ltm) {cd.ltm[k]=1; continue} //Add to delete queue
+			throw "No such CV key";
+		}
+		if(o) {
+			if(c.t!=='f' || !c.e || (c.d!==I_DROP && c.d!==I_MULTI))
+				throw "Opts list only supported on editable DROP or MULTI type";
+			i=c.o, c.o=v;
+		} else i=c.v, c.v=v;
+		schema.checkSchema(c, CVFmt.f);
+		//Set or unset val
+		if(i==null ? valToBool(v) : JSON.stringify(v)!==JSON.stringify(i)) {
+			if(upd) (j.$set||(j.$set={}))[k]=v; else j[k]=v;
+		} else if(upd) (j.$unset||(j.$unset={}))[k]=1;
+	} catch(e) {throw schema.errAt(k,e)}
+}
+
 //============================================== User Auth ==============================================
 
 class TknExpErr extends Error {
 	constructor(e) {super(e||"Expired token"), this.name='TknExpErr'}
+}
+class ConfirmErr extends Error {
+	constructor(e) {super(e+". Are you sure?"), this.name='ConfirmErr'}
 }
 
 function hasAuth(t,lv,cat) {
@@ -805,7 +921,7 @@ function hasAuth(t,lv,cat) {
 	return !lv || ((t.a[cat]||t.a.g) & lv);
 }
 function reqAuth(t,lv,cat,noCon) {
-	if(noCon && t.CON) throw "Console cannot run this command";
+	if(noCon && t && t.CON) throw "Console cannot run this command";
 	t=hasAuth(t,lv,cat);
 	if(t==null) throw new TknExpErr("Not logged in");
 	if(!t) throw "Not authorized";
@@ -959,7 +1075,7 @@ async function chkCat(c) {
 }
 async function chkItems(c) {
 	let i,m,p=[];
-	for await(i of c.itm.find({}, {projection:{n:1, _i:1}})) try {
+	for await(i of c.itm.find({}, {projection:{d:0, m:0, i:0}})) try {
 		//Check magic
 		m=new UUID(i._id).getMagic();
 		if(m !== c.m) throw `ID Magic ${m} != Cat Magic ${c.m}`;
@@ -975,7 +1091,8 @@ async function chkItems(c) {
 		}
 		//Update history name
 		if(c.h) p.push(c.log.updateOne({t:LOG_PC, p:i._id}, {$set:{n:i.n}}));
-	} catch(e) {throw `Itm ${i.n} (#${i._id}): `+e}
+		checkCVars(i.v, {ltm:p, t:c.itm}, i);
+	} catch(e) {throw schema.errAt(`Itm ${i.n} (#${i._id})`,e)}
 	await Promise.all(p);
 }
 async function chkInv(c) {
@@ -996,11 +1113,11 @@ async function chkInv(c) {
 			if(!ml) ml=await dbCmd(['ln',c._id,'"n":"Unknown"'],0,0);
 			p.push(c.inv.updateOne({_id:i._id}, {$set:{l:ml}}));
 		}
-	} catch(e) {throw `Inv #${i._id}: `+e}
+	} catch(e) {throw schema.errAt(`Inv #${i._id}`,e)}
 	await Promise.all(p);
 }
 async function chkLocs(c) {
-	let ll=await c.loc.find({}, {projection:{n:1, p:1}}).toArray(),m,p=[];
+	let ll=await c.loc.find({}, {projection:{d:0, _fn:0}}).toArray(),m,p=[];
 	tblToTree(ll, l => {try {
 		//Check magic
 		m=new UUID(l._id).getMagic();
@@ -1009,7 +1126,8 @@ async function chkLocs(c) {
 		p.push(c.loc.updateOne({_id:l._id}, {$set:{_fn:l._fn}}));
 		//Update history name
 		if(c.h) p.push(c.log.updateOne({t:LOG_LC, l:l._id}, {$set:{n:l.n}}));
-	} catch(e) {throw `Loc ${l.n} (#${l._id}): `+e}},1);
+		checkCVars(l.v, {ltm:p, t:c.loc}, l);
+	} catch(e) {throw schema.errAt(`Loc ${l.n} (#${l._id})`,e)}},1);
 	await Promise.all(p);
 }
 
@@ -1136,8 +1254,6 @@ function tblToTree(tbl, runFn, calcFNs) {
 //============================================== Main ==============================================
 
 await begin();
-
-//TODO Better cmd line parsing, up arrow support
 
 const R_CS=/''|'.*?[^\\]'|{.+}|\[.+\]|[^\s]+/g,
 R_CJ=/^'/, R_CR=/\\(')/g;
