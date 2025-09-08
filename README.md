@@ -22,7 +22,7 @@ NLDB works with both the **Unique Inventory** data model *(best for tracking uni
 
 ### 📱 Works great on mobile
 
-![](doc/Mobile.png)
+<img src=doc/Mobile.png width=30%>
 
 ### 🚀 High-performance universal search
 
@@ -32,7 +32,7 @@ NLDB works with both the **Unique Inventory** data model *(best for tracking uni
 
 ### 🧲 Easy Duplicate & Bulk Operations
 
-![](doc/Copy.png)
+<img src=doc/Copy.png width=60%>
 
 ### 📜 History Log & Auditing
 
@@ -44,7 +44,7 @@ NLDB works with both the **Unique Inventory** data model *(best for tracking uni
 
 ### 📷 Scannable QR codes for tracking
 
-![](doc/QR.png)
+<img src=doc/QR.png width=60%>
 
 ### 🧪 Extendable API
 
