@@ -305,13 +305,13 @@ body:not([data-bs-theme=light]) .fInp { --hover-bg:var(--dim2); }
 	align-items:center; background:#00000033;
 }
 
-#MB > *, .MB > * { margin-bottom:10px; }
+#MB > *, .MB > *, .lv > *, .pv .MB { margin-bottom:10px; }
 #MB canvas { width:100%; }
 .modal-footer { justify-content:flex-start; }
 #M_NC { margin-left:auto; }
 
 /* Page */
-:is(#OB,#MB,.MB,#CONT,.pc,.ll,.lv,.iv,.pc > div div) > :last-child { margin-bottom:0; }
+:is(#OB,#MB,.MB,#CONT,.pv,.pc,.ll,.lv,.iv,.pc > div div) > :last-child { margin-bottom:0; }
 
 .na,.scr { display:block; text-align:center; color:var(--dim1); }
 .scr {
@@ -394,7 +394,6 @@ h3.hr { margin-bottom:12px; }
 	border-top:1px solid var(--bs-border-color);
 	background:var(--bg);
 }
-.lv > * { margin-bottom:10px; }
 body:has(#CONT > .lvFull) { overflow:hidden; }
 .lvFull {
 	height:100%; z-index:999;

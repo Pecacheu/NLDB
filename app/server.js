@@ -1,12 +1,12 @@
 //NLDB, Pecacheu 2025. GNU GPL v3
-const VER='2.0 Beta 6';
+const VER='2.0 Beta 7';
 
 import fs from 'fs/promises';
 import read from 'readline';
 import path from 'path';
 import http from 'http';
 import https from 'https';
-import chalk from 'chalk';
+import C from 'chalk';
 import mdb from 'mongodb';
 import ar2 from 'argon2';
 import sharp from 'sharp';
@@ -50,6 +50,7 @@ MaxLogLen=500,
 MaxPageSizeAnon=200,
 MaxPageSize=2000,
 Web=path.join(App, "../web"),
+Res=Web+"/u",
 VDir={'utils.js': path.join(App, "node_modules/raiutils/utils.min.js")},
 LogDateFmt={sec:true, suf:false, year:false, df:true},
 ExpFmt={suf:false, year:false, df:true},
@@ -60,9 +61,9 @@ MaxUpload=Conf.maxUploadMb*1000000,
 SrvOpt=Conf.sslKey?{key:await fs.readFile(Conf.sslKey), cert:await fs.readFile(Conf.sslCert)}:null,
 print=console.log,
 //Colors
-C_USR = chalk.yellow,
-C_TKN = chalk.magenta,
-C_VAL = chalk.cyan,
+C_USR = C.yellow,
+C_TKN = C.magenta,
+C_VAL = C.cyan,
 //Rate Limits
 AuthLim = new RateLimiterMemory({points:2, duration:4}),
 UpLim = new RateLimiterMemory({points:10, duration:1});
@@ -86,9 +87,9 @@ async function begin() {
 	print("IP:",ips,`OS: ${sysOS}, ${arch}\nCPU: ${cpu}\n\n`+chalk.yellow(`NLDB v${VER}`));
 
 	print("Loading icons...");
-	await fs.mkdir(Web+"/u", {recursive:true});
+	await fs.mkdir(Res, {recursive:true});
 	await sharp(App+"/logoSml.png").metadata(); //Test Sharp
-	await fs.stat(Web+"/logoSml.png").catch(() => {LOvr=0});
+	await fs.stat(Res+"/logoSml.png").catch(() => {LOvr=0});
 
 	print("Loading database...");
 	DB = new mdb.MongoClient(Conf.dbUri).db('nldb');
@@ -108,7 +109,7 @@ async function begin() {
 		}
 	}
 	(SrvOpt?https.createServer(SrvOpt, rqCb):http.createServer(rqCb)).listen(Conf.port, () => {
-		print("Listening at "+chalk.bgGreen(`http${SrvOpt?'s':''}://${Conf.host}:${Conf.port}`));
+		print("Listening at "+C.bgGreen(`http${SrvOpt?'s':''}://${Conf.host}:${Conf.port}`));
 	});
 }
 
@@ -124,14 +125,14 @@ async function onReq(req, res) {
 		q=q.split('&'), q.forEach((r,i) => q[i]=decodeURIComponent(r));
 		return await dbCmd(q,req,res);
 	} else if(pn === '/login') {
-		if(!SrvOpt) throw "Insecure Connection";
+		if(!SrvOpt) print(C.bgYellow("Login from insecure connection"));
 		if(Conf.auth === 'wildapricot') {
 			res.writeHead(307,'',{location:OAuthUri});
 			res.end(); return 2;
 		} else if(Conf.auth !== 'builtin') throw "No Login System";
 	} else if(pn === '/auth') {
 		await limit(AuthLim,1);
-		if(!SrvOpt) throw "Insecure Connection";
+		if(!SrvOpt) print(C.bgYellow("Auth from insecure connection"));
 		let q=utils.fromQuery(uri.search), qc={...q};
 		delete qc.p;
 		msg("[AUTH]", req.socket.remoteAddress, qc);
@@ -149,7 +150,7 @@ async function onReq(req, res) {
 		let img=sharp(await reqData(req)), ext='.webp', opt,
 		[md,fn] = await Promise.all([
 			img.metadata(),
-			(async () => Web+(ql?"/logo":"/u/"+await UUID.genUUID()))()
+			(async () => Res+'/'+(ql?"logo":await UUID.genUUID()))()
 		]);
 		msg("[UP]", q, fn, md.format, md.width+'x'+md.height, C_USR(t.e));
 		if(ql) ext='.png';
@@ -168,9 +169,9 @@ async function onReq(req, res) {
 		}
 		await Promise.all(q);
 		if(ql) LOvr=1;
-		return ql?1:(fn+ext).slice(Web.length+3);
-	} else if(!LOvr && (pn === '/logo.png' || pn === '/logoSml.png')) {
-		await router.serve(App+pn, req, res);
+		return ql?1:(fn+ext).slice(Res.length+1);
+	} else if(pn === '/logo.png' || pn === '/logoSml.png') {
+		await router.serve((LOvr?Res:App)+pn, req, res);
 		return 2;
 	} else if(pn.startsWith('/u/')) reqAuth(getTkn(req)[0],A_RD);
 	if(pn === '/' || pn === '/login') {
@@ -207,7 +208,7 @@ function endReq(res,r,e) {
 		let s=`[${date()}] ${re.un||"Anonymous"} Update `+re.qr;
 		if(e) s+=" Failed: "+e;
 		else if(re.ld) s+=' '+(Array.isArray(re.ld)?'['+re.ld.join(', ')+']':JSON.stringify(re.ld));
-		fs.writeFile("db.log",s+'\n',{flag:'a'},e=>{if(e) msg(chalk.red(e.stack))});
+		fs.writeFile("db.log",s+'\n',{flag:'a'},e=>{if(e) msg(C.red(e.stack))});
 	}*/
 	let te=e instanceof TknExpErr;
 	if(te || e instanceof ConfirmErr) {
@@ -220,7 +221,7 @@ function endReq(res,r,e) {
 		let t=typeof r;
 		if(t==='object') r=JSON.stringify(r);
 		else if(t!=='string') r=r.toString();
-		print(chalk.dim(r!==1?`(${r.length}) `+
+		print(C.dim(r!==1?`(${r.length}) `+
 			(r.length>MaxLogLen?r.slice(0,MaxLogLen)+'...':r):"Done"));
 	}
 	res.writeHead(e?500:200,''), res.end(e?e.toString():r);
@@ -235,7 +236,7 @@ async function dbLock(l) {
 }
 async function waitUnlock() {
 	if(Lock) {
-		print(chalk.dim("Waiting on lock..."));
+		print(C.dim("Waiting on lock..."));
 		while(Lock) await Lock.p, await utils.sleep(1);
 	}
 }
@@ -314,7 +315,7 @@ A_WS	Edit Workspace Settings (Global only)
 
 //Field Types
 I_TEXT=1, I_AREA=2, I_NUM=3, I_EMAIL=4, I_COLOR=5,
-I_FILE=6, I_SWITCH=7, I_LINK=8, I_DROP=9, I_MULTI=10,
+I_FILE=6, I_SWITCH=7, I_DROP=9, I_MULTI=10,
 I_DATE=11, I_DATETIME=12;
 
 //Default Workspace Config
@@ -322,8 +323,10 @@ WS={_id:0, r:true, a:{g:A_DEF}, c1:0xF25D26, c2:0x6ABF40};
 
 //============================================== Commands ==============================================
 
-const URLFmt="((\\.)?[a-zA-Z0-9-])+",
-EmailFmt="[a-z0-9.!#$%&'`*+/=^_{}|~-]+@"+URLFmt,
+const DomainFmt="[a-zA-Z0-9-](?:\\.?[a-zA-Z0-9-])*",
+URLFmt=`(?:https?:\\/\\/${DomainFmt})?(?:[\\/.]?[a-zA-Z0-9-_])*`,
+EmailFmt="[a-z0-9.!#$%&'`*+/=^_{}|~-]+@"+DomainFmt,
+DomainOpt={t:'str|str',f:[null,DomainFmt],max:[0,NameMax]},
 URLOpt={t:'str|str',f:[null,URLFmt],max:[0,NameMax]},
 IDFmt={t:'str',len:11},
 IDFmtOpt={t:'str|str',len:[0,11],req:0},
@@ -344,16 +347,17 @@ CVFmt={t:'list', min:0, f:[
 	{...CVField, d:{t:'int',val:I_COLOR}, v:{t:'int',min:0,max:0xFFFFFF}},
 	{...CVField, d:{t:'int',val:I_FILE}, v:URLOpt},
 	{...CVField, d:{t:'int',val:I_SWITCH}, v:{t:'bool'}},
-	//TODO I_LINK=8
 	{...CVField, d:{t:'int',val:I_DROP}, v:{t:'str'}, e:BoolOpt, o:{t:'list',c:'str'}},
 	{...CVField, d:{t:'int',val:I_MULTI}, v:{t:'list',c:'str',min:0}, e:BoolOpt, o:{t:'list',c:'str'}},
-	//TODO I_DATE=11, I_DATETIME=12
+	{...CVField, d:{t:'int',min:I_DATE,max:I_DATETIME}, v:{t:'int'}},
+	{t:{t:'str',f:'k'}, n:NameFmt, v:URLOpt}, //Link
 	{t:{t:'str',f:'h'}, n:NameFmt}, //Heading
 	{t:{t:'str',f:'t'}, n:{t:'str'}}, //Text
 	{t:{t:'str',f:'p|i|l|u'}, i:CIDFmt, n:NameFmt, v:IDFmtOpt} //Part/Inv/Loc
 ]},
+CVarType=['p','i','l'],
 WSDataFmt={
-	e:URLOpt, //Email Domain
+	e:DomainOpt, //Email Domain
 	r:{t:'bool'}, //Anon Read-Only
 	q:{t:'bool'}, //Enable Invite Codes
 	v:{t:'dict',c:{t:'int',min:0}}, //Invite Codes
@@ -381,6 +385,7 @@ CatDataFmt={
 	h:BoolOpt, //Track History
 	i:BoolOpt, //Multi Inv
 	e:{t:'list',c:IDFmt,min:0,req:0}, //Ext Locs
+	pv:CVFmt, iv:CVFmt, lv:CVFmt //Custom Vars
 	//TODO s:[subCats]
 	//cat.s - _id:id, n:name, v:[varFields]
 }, ItmDataFmt={
@@ -478,8 +483,8 @@ async function dbCmd(q,req,res) {
 		if(q.length !== 2) throw "Bad Args";
 		if(q[1] === 'l') {
 			if(LOvr) await Promise.all([
-				fs.rm(Web+"/logo.png"),
-				fs.rm(Web+"/logoSml.png")
+				fs.rm(Res+"/logo.png"),
+				fs.rm(Res+"/logoSml.png")
 			]), LOvr=0;
 		} else {
 			//TODO delete image
@@ -496,10 +501,8 @@ async function dbCmd(q,req,res) {
 		if(q.length !== 2) throw "Bad Args";
 		if(!(c=CatID[q[1]]) && !(c=catFromID(q[1]))) throw "Bad Cat ID";
 		reqAuth(t,A_RD,c);
-		d=await Cat.findOne({_id:c._id});
-		if(!d) throw "Cat not found";
-		updateCache(c,d,CatDataFmt);
-		d={...d}, delete d.m;
+		updateCache(d={},c,CatDataFmt);
+		d._id=c._id;
 		return d;
 	//List Part/Inv/Log [cid|pid, skip, pageSize[, extraInfo]] -or- List Loc [cid|pid]
 	case 'pl': case 'il': case 'll': case 'hl':
@@ -510,20 +513,25 @@ async function dbCmd(q,req,res) {
 			else if(q.l) c=catFromID(q[1]);
 			if(!c) throw "Bad Cat ID";
 		}
+		if(q.length>4) asType(q,4,T_INT,"ExtraInfo",1);
 		reqAuth(t, q.h?A_ITM:A_RD, c);
-		j=getOf(q,ItmProj,InvProj,LocProj,0), d=[];
+		j=getOf(q,ItmProj,InvProj,LocProj,0);
+		//Extra Info - Custom Vars
+		if(q[4] && (q.v=c[q[0][0]+'v'])) {
+			j={...j};
+			for(n of q.v) if(n.i) j['#c_'+n.i]=1;
+		}
+		d=[];
 		if(id) d.push({$match:q.h ? {$or:[{p:id},{i:id},{l:id},
 			{o:id},{h:id}]} : {$or:[{p:id},{l:id}]}});
 		d.push({$sort:q.h?{d:-1}:{n:1}});
 		if(!q.l) {
 			//Extra Info
-			q.x=[];
-			if(q.length>4) asType(q,4,T_INT,"ExtraInfo",1);
 			if(q[4] && q[0]==='pl' && !c.i) q.x=[ //Single Inv
 				{$lookup:{from:c.inv.s.namespace.collection,
 					localField:'_i', foreignField:'_id', as:'_i'}},
 				{$project:{...j, _i:{$arrayElemAt:['$_i', 0]}}}
-			];
+			]; else q.x=j?[{$project:j}]:[];
 			//Paging
 			asType(q,2,T_INT,"Skip");
 			asType(q,3,T_INT,"PageSize");
@@ -545,12 +553,12 @@ async function dbCmd(q,req,res) {
 		return d;
 	case 'ul': //List User
 		reqAuth(t, A_USR);
-		return await DB.u.find({_id:{$ne:0}},{projection:UsrProj}).toArray();
+		return await DB.u.find({_id:{$ne:0}}, {projection:UsrProj}).toArray();
 	case 'u': //Get User [id]
 		if(q.length !== 2) throw "Bad Args";
 		asType(q,1,T_ID);
 		reqAuth(t, A_USR);
-		d=await DB.u.findOne({_id:q[1]},{projection:UsrViewProj});
+		d=await DB.u.findOne({_id:q[1]}, {projection:UsrViewProj});
 		if(!d) throw "User not found";
 		if(!hasAuth(t,A_WS)) for(n of Object.keys(d.a)) if(n!=='g') delete d.a[n];
 		return d;
@@ -574,6 +582,13 @@ async function dbCmd(q,req,res) {
 				`enable "Separate Items & Inventory" in cat settings)`;
 		}
 		return d;
+	case 'pi': //Get PID for Inv [id]
+		if(q.length !== 2) throw "Bad Args";
+		c=catFromID(q[1]);
+		reqAuth(t,A_RD,c);
+		d=await c.inv.findOne({_id:q[1]}, {projection:{p:1}});
+		if(!d) throw "Entity not found";
+		return d.p;
 	case 'q': //Search
 		if(q.length !== 4) throw "Bad Args";
 		if(!(c=CatID[q[1]])) throw "Bad Cat ID";
@@ -618,10 +633,13 @@ async function dbCmd(q,req,res) {
 			if(!j) break;
 			if(++n > 255) throw "Too many categories (Max is 255)";
 		}
-		await Cat.insertOne(c={_id:id, m:n, ...q[1]});
+		j=q[1];
+		//Custom vars
+		for(n of CVarType) checkCVars(j[n+'v'],{},0,0,n);
+		await Cat.insertOne(c={_id:id, m:n, ...j});
 		await addCat(c);
 		return id;
-	case 'sn': //New SubCat [cid, name] -> id
+	/*case 'sn': //New SubCat [cid, name] -> id
 		reqAuth(t,A_CAT);
 		if(q.length !== 3) throw "Bad Args";
 		if(!(c=CatID[q[1]])) throw "Bad Cat ID";
@@ -629,22 +647,22 @@ async function dbCmd(q,req,res) {
 		id=(await UUID.genUUID(null,c.m)).toString();
 		d=await Cat.updateOne({_id:q[1]}, {$push:{s:{_id:id, n:q[2]}}});
 		if(d.modifiedCount !== 1) throw "Cat not found";
-		return id;
+		return id;*/
 	//New Part/Loc [cid, data] -or- New Inv [pid, data] -> id
 	case 'pn': case 'in': case 'ln':
-		q.i=q[0]==='in';
+		q.i=q[0]==='in', q.l=q[0]==='ln';
 		if(q.length !== 3) throw "Bad Args";
 		if(!(c=q.i?catFromID(q[1]):CatID[q[1]])) throw "Bad Cat ID";
 		reqAuth(t,A_ITM,c);
 		if(q.i) asType(q,1,T_ID,"Part ID");
 		asType(q,2,T_OBJ,"Data",DataMax);
-		n=getCmnt(j=q[2]), q.v=getCValDict(j);
+		n=getCmnt(j=q[2]), q.v=getCVals(j);
 		schema.checkSchema(j, getOf(q,ItmDataFmt,InvDataFmt,LocDataFmt));
 		j._id=id=(await UUID.genUUID(null,c.m)).toString();
-		q.c=getTbl(q,c);
-		if(q[0]==='ln') { //Verify loc tree, calc fn
+		q.tbl=getTbl(q,c);
+		if(q.l) { //Verify loc tree, calc fn
 			await dbLock(req);
-			d=await q.c.find({}, {projection:{n:1, p:1}}).toArray();
+			d=await q.tbl.find({}, {projection:{n:1, p:1}}).toArray();
 			d.push(j), tblToTree(d,0,1);
 		} else if(q.i) { //Verify part ID
 			d=await c.itm.findOne({_id:q[1]});
@@ -652,19 +670,20 @@ async function dbCmd(q,req,res) {
 			if(!c.i && d._i) throw "Cannot create inventory in Single Inv mode";
 			j.p=q[1];
 		}
-		checkCVars(j.v);
-		setCVals(q.v, j.v, j);
-		await q.c.insertOne(j);
+		q.cat=c;
+		checkCVars(j.v, q);
+		setCVals(q.v, j.v, q, j);
+		await q.tbl.insertOne(j);
 		if(q.i && !c.i) { //Single Inv
 			await c.itm.updateOne({_id:q[1]}, {$set:{_i:id}});
 		}
 		d=q.i?{q:j.q, p:j.p, l:j.l}:{n:j.n};
-		if(q[0]==='ln' && j.p) d.h=j.p;
+		if(q.l && j.p) d.h=j.p;
 		dbLog(c, getOf(q,LOG_PC,LOG_IC,LOG_LC), id, q[0][0], t, n, d);
 		return id;
 	//-------- Update --------
-	case 'cu': //Cat Update [id, data]
-		if(q.length !== 3) throw "Bad Args";
+	case 'cu': //Cat Update [id, data[, confirm]]
+		if(q.length !== 3 && q.length !== 4) throw "Bad Args";
 		if(!(c=CatID[q[1]])) throw "Bad ID";
 		reqAuth(t,A_CAT,c);
 		asType(q,2,T_OBJ,"Data",DataMax);
@@ -675,6 +694,13 @@ async function dbCmd(q,req,res) {
 			try {await chkItems(c)}
 			catch(e) {c.i=q.i; await chkItems(c); throw e}
 		}
+		//Custom vars
+		for(n of CVarType) {
+			if(!(q.j=j[n+'v'])) continue;
+			q.q={cat:c, tbl:getTbl(n,c), cf:!!q[3]};
+			checkCVars(q.j, q.q, q.del={}, c, n);
+			if(q.del.$unset) await q.q.tbl.updateMany({}, q.del);
+		}
 		d=await Cat.updateOne({_id:q[1]}, dbSet(j));
 		if(d.matchedCount !== 1) throw "Cat not found";
 		await updateCat(c,j);
@@ -684,19 +710,19 @@ async function dbCmd(q,req,res) {
 		c=catFromID(id=q[1]);
 		reqAuth(t,A_ITM,c);
 		asType(q,2,T_OBJ,"Data",DataMax);
-		n=getCmnt(j=q[2]), q.v=getCValDict(j);
+		n=getCmnt(j=q[2]), q.v=getCVals(j);
 		schema.checkSchema(j, getOf(q,ItmDataFmt,InvDataFmt,LocDataFmt), 1);
-		q.c=getTbl(q,c);
+		q.tbl=getTbl(q,c);
 		if(q[0]==='lu' && ('n' in j || 'p' in j)) { //Verify loc tree, calc fn
 			await dbLock(req);
-			d=await q.c.find({}, {projection:{n:1, p:1}}).toArray();
+			d=await q.tbl.find({}, {projection:{n:1, p:1}}).toArray();
 			let a=d.each(l => l._id===id?l:null);
 			if(!a) throw "Entity not found";
 			q.ol=a.p, updateCache(a,j);
 			tblToTree(d,0,2);
 			q.d=a, j._fn=a._fn;
 		} else if(q[0]==='iu' && ('l' in j || 'q' in j)) { //Get old loc
-			q.a=await q.c.findOne({_id:id});
+			q.a=await q.tbl.findOne({_id:id});
 			if(!q.a) throw "Entity not found";
 			q.p=q.a.p, q.ol=q.a.l, q.oq=q.a.q;
 		}
@@ -706,18 +732,18 @@ async function dbCmd(q,req,res) {
 			if(j.v) await dbLock(req);
 			let a=q.a;
 			if(!a) {
-				a=await q.c.findOne({_id:id});
+				a=await q.tbl.findOne({_id:id});
 				if(!a) throw "Entity not found";
 			}
-			q.cf=!!q[3];
-			if(j.v) checkCVars(j.v, q, q.j, a);
-			if(q.v) setCVals(q.v, j.v||a.v, q.j, 1);
+			q.cf=!!q[3], q.cat=c, q.upd=1;
+			checkCVars(j.v, q, q.j, a);
+			setCVals(q.v, j.v||a.v, q, q.j);
 		}
-		d=await q.c.updateOne({_id:id}, q.j);
+		d=await q.tbl.updateOne({_id:id}, q.j);
 		if(d.matchedCount !== 1) throw "Entity not found";
 		if(q.d && q.d.c) { //Update fn for all descendants
 			let v,p=[],fn=a => {for(v of a.c) {
-				p.push(q.c.updateOne({_id:v._id}, {$set:{_fn:v._fn}}));
+				p.push(q.tbl.updateOne({_id:v._id}, {$set:{_fn:v._fn}}));
 				if(v.c) fn(v);
 			}}
 			fn(q.d);
@@ -758,9 +784,9 @@ async function dbCmd(q,req,res) {
 		c=catFromID(id=q[1]);
 		reqAuth(t,A_ITM,c);
 		asType(q,2,0,"Comment",NameMax,1);
-		q.c=getTbl(q,c);
+		q.tbl=getTbl(q,c);
 		if(q[0]==='id') {
-			let a=await q.c.findOne({_id:id});
+			let a=await q.tbl.findOne({_id:id});
 			if(!a) throw "Entity not found";
 			q.p=a.p;
 			if(!c.i) { //Delete part w/ inv in Single Inv
@@ -769,7 +795,7 @@ async function dbCmd(q,req,res) {
 		} else if(q[0]==='pd') {
 			//TODO Delete all inv of part
 		}
-		d=await q.c.deleteOne({_id:id});
+		d=await q.tbl.deleteOne({_id:id});
 		if(d.deletedCount !== 1) throw "Entity not found";
 		dbLog(c, getOf(q,LOG_PD,LOG_ID,LOG_LD), id, q[0][0],
 			t, q[2], q[0]==='id'?{p:q.p}:null);
@@ -836,60 +862,77 @@ async function getCache(cat, type, dat) {
 
 //============================================== Custom Data ==============================================
 
-function checkCVars(cd, q, j, jOld) {
-	if(!cd) return;
-	let c,o,i,ck={},co={},ce=[];
-	//CV list -> dict by ID
-	if(jOld && jOld.v) for(c of jOld.v) if(c.i) co[c.i]=c;
-	for(c of cd) try {
-		i=c.i; if(!i) continue;
+//Check validity of custom var table
+function checkCVars(cVar, q, j, jOld, key='') {
+	if(!cVar) return;
+	let c,o,i,ck={},ce=[],co=jOld && jOld[key+'v'];
+	if(co) co=cvToDict(co);
+	for(c of cVar) try {
+		if(!(i=c.i)) continue;
 		if(i in ck) throw "Duplicate ID";
 		ck[i]=c;
-		if(o=co[i]) { //Existing var
+		if(co && (o=co[i])) { //Existing var
 			if(c.t!==o.t || c.d!==o.d) {
 				if(q.cf) o._d=1; else ce.push(o.n);
 			}
 		}
 		//Verify vars schema
-		if(q && q.ltm) schema.checkSchema(c, CVFmt.f);
+		if(q.ltm) schema.checkSchema(c, CVFmt.f);
 	} catch(e) {throw schema.errAt('CV #'+i,e)}
 	if(ce.length)
 		throw new ConfirmErr(`This action will erase values of ${ce.join(', ')}`);
 	//Delete vals for removed vars
-	for(i in co) if(!(i in ck) || co[i]._d) {
-		o='#'+i; if(o in jOld) (j.$unset||(j.$unset={}))[o]=1;
-		o+=':o'; if(o in jOld) (j.$unset||(j.$unset={}))[o]=1;
+	if(key) key='c_';
+	if(co) for(i in co) if(!(i in ck) || co[i]._d) {
+		o='#'+key+i; if(key || o in jOld) (j.$unset||(j.$unset={}))[o]=1;
+		o+='!o'; if(key || o in jOld) (j.$unset||(j.$unset={}))[o]=1;
+		delete co[i]._d;
 	}
 	//Verify vals schema
 	if(q && q.ltm) {
-		cd.ltm={};
-		setCVals(getCValDict(j),cd,{});
-		c=Object.keys(cd.ltm);
+		q.del={};
+		setCVals(getCVals(j), cVar, q);
+		c=Object.keys(q.del);
 		if(c.length) {
 			print(`Delete ${j.n} (#${j._id}) Unused CVs:`,c);
-			q.ltm.push(q.t.updateOne({_id:j._id}, {$unset:cd.ltm}));
+			q.ltm.push(q.tbl.updateOne({_id:j._id}, {$unset:q.del}));
 		}
 	}
 }
 
-function getCValDict(j) {
+//Custom vars list -> dict by ID
+function cvToDict(cv) {
+	if(!cv) throw "Setting CVals, but no matching CVar list found";
+	let c,ck={};
+	for(c of cv) if(c.i) ck[c.i]=c;
+	return ck;
+}
+
+//Extract custom vals from data dict
+function getCVals(j) {
 	let k,cv;
 	for(k in j) if(k.startsWith('#')) {
 		(cv||(cv={}))[k]=j[k], delete j[k];
 	}
 	return cv;
 }
-function setCVals(cv, cd, j, upd) {
-	if(!cv) return;
-	if(!cd) throw "Custom vals but no var list";
-	let k,v,o,i,c,ck={};
-	//CV list -> dict by ID
-	for(c of cd) if(c.i) ck[c.i]=c;
-	for(k in cv) try {
-		i=k.slice(1), v=cv[k];
-		if(o=i.endsWith(':o')) i=i.slice(0,-2);
-		if(!(c=ck[i])) {
-			if(cd.ltm) {cd.ltm[k]=1; continue} //Add to delete queue
+
+//Update custom vals
+function setCVals(cVal, cVar, q, j) {
+	if(!cVal) return;
+	let k,v,o,i,c,ik,ck;
+	for(k in cVal) try {
+		i=k.slice(1), v=cVal[k];
+		if(o=i.endsWith('!o')) i=i.slice(0,-2);
+		if(i.startsWith('c_')) { //Cat Var
+			if(!ck) ck=cvToDict(q.cat[q[0][0]+'v']);
+			c=ck[i.slice(2)]; if(c) c={...c};
+		} else { //Itm Var
+			if(!ik) ik=cvToDict(cVar);
+			c=ik[i];
+		}
+		if(!c) {
+			if(q.ltm) {q.del[k]=1; continue} //Add to delete queue
 			throw "No such CV key";
 		}
 		if(o) {
@@ -899,9 +942,12 @@ function setCVals(cv, cd, j, upd) {
 		} else i=c.v, c.v=v;
 		schema.checkSchema(c, CVFmt.f);
 		//Set or unset val
+		if(q.ltm) continue;
+		//TODO TEMP
+		console.log(k, JSON.stringify(v), JSON.stringify(i), JSON.stringify(v)!==JSON.stringify(i));
 		if(i==null ? valToBool(v) : JSON.stringify(v)!==JSON.stringify(i)) {
-			if(upd) (j.$set||(j.$set={}))[k]=v; else j[k]=v;
-		} else if(upd) (j.$unset||(j.$unset={}))[k]=1;
+			if(q.upd) (j.$set||(j.$set={}))[k]=v; else j[k]=v;
+		} else if(q.upd) (j.$unset||(j.$unset={}))[k]=1;
 	} catch(e) {throw schema.errAt(k,e)}
 }
 
@@ -961,8 +1007,8 @@ async function getAuth(req,q) {try {
 	await dbLock(req);
 	let u=await DB.u.findOne({e:t.e});
 	if(u) { //Login
-		let r=u.k, d=new Date();
-		r[k]=d, r={$set:{k:r}};
+		u.k[k]=new Date();
+		let r={$set:{k:u.k}};
 		if(b) {
 			if(q.s) throw "Account already exists";
 			if(!await ar2.verify(u.p, t.p)) throw '';
@@ -1020,8 +1066,8 @@ async function mLoop(LTM) {
 async function mRun(LTM) {
 	let now=new Date();
 	if(LTM) LTMLast=now.getTime();
-	print(chalk.dim(chalk.yellow(`[Running ${LTM?"long term":''
-		} maintenance @ ${utils.formatDate(now,LogDateFmt)}]`)));
+	print(C.dim(C.yellow(`[Running ${LTM?"long term ":''
+		}maintenance @ ${utils.formatDate(now,LogDateFmt)}]`)));
 	//Refresh WS, Cat, Usr cache
 	if(LTM) {
 		await Promise.all([loadCats(), loadUsrs(),
@@ -1034,7 +1080,7 @@ async function mRun(LTM) {
 		t=Tkn[k], d=t.k[k], x=now-d;
 		print("Token", C_TKN(k), "for", C_USR(t.e),
 			"last seen", C_VAL(utils.formatDate(d,ExpFmt)),
-			"expires in", chalk.bold(chalk.blue(Math.ceil((TknExp-x)/3600000)+'h')));
+			"expires in", C.bold(C.blue(Math.ceil((TknExp-x)/3600000)+'h')));
 		if(x >= TknExp) p.push(delTkn(k).catch(err));
 	}
 	//Push token cache to DB
@@ -1042,7 +1088,7 @@ async function mRun(LTM) {
 		p.push(async () => {
 			let u=Usr[k], r=await DB.u.updateOne({_id:k}, {$set:{k:u.k}});
 			if(r.matchedCount !== 1) {
-				print(chalk.red(`User ${u.e} deleted`));
+				print(C.red(`User ${u.e} deleted`));
 				for(r in u.k) delete Tkn[r];
 				delete Usr[k];
 			}
@@ -1091,7 +1137,7 @@ async function chkItems(c) {
 		}
 		//Update history name
 		if(c.h) p.push(c.log.updateOne({t:LOG_PC, p:i._id}, {$set:{n:i.n}}));
-		checkCVars(i.v, {ltm:p, t:c.itm}, i);
+		checkCVars(i.v, {0:'p', ltm:p, cat:c, tbl:c.itm}, i);
 	} catch(e) {throw schema.errAt(`Itm ${i.n} (#${i._id})`,e)}
 	await Promise.all(p);
 }
@@ -1100,7 +1146,7 @@ async function chkInv(c) {
 	//Check for missing loc
 	ml=await c.loc.findOne({$or:[{n:"Missing"},{n:"Unknown"}]}, {projection:{_id:1}});
 	if(ml) ml=ml._id;
-	for await(i of c.inv.find({}, {projection:{p:1, l:1}})) try {
+	for await(i of c.inv.find({}, {projection:{q:0, s:0}})) try {
 		//Check magic
 		m=new UUID(i._id).getMagic();
 		if(m !== c.m) throw `ID Magic ${m} != Cat Magic ${c.m}`;
@@ -1113,6 +1159,7 @@ async function chkInv(c) {
 			if(!ml) ml=await dbCmd(['ln',c._id,'"n":"Unknown"'],0,0);
 			p.push(c.inv.updateOne({_id:i._id}, {$set:{l:ml}}));
 		}
+		checkCVars(i.v, {0:'i', ltm:p, cat:c, tbl:c.inv}, i);
 	} catch(e) {throw schema.errAt(`Inv #${i._id}`,e)}
 	await Promise.all(p);
 }
@@ -1126,14 +1173,16 @@ async function chkLocs(c) {
 		p.push(c.loc.updateOne({_id:l._id}, {$set:{_fn:l._fn}}));
 		//Update history name
 		if(c.h) p.push(c.log.updateOne({t:LOG_LC, l:l._id}, {$set:{n:l.n}}));
-		checkCVars(l.v, {ltm:p, t:c.loc}, l);
+		checkCVars(l.v, {0:'l', ltm:p, cat:c, tbl:c.loc}, l);
 	} catch(e) {throw schema.errAt(`Loc ${l.n} (#${l._id})`,e)}},1);
 	await Promise.all(p);
 }
 
 async function genTkn() {
 	let u=await UUID.genUUID(), r=await UUID.randBytes(24);
-	return u.toString()+r.toString('base64url');
+	u=u.toString()+r.toString('base64url');
+	if(Tkn[u]) throw "Token collision!?";
+	return u;
 }
 async function delTkn(k) {
 	let t=Tkn[k];
@@ -1206,10 +1255,10 @@ function updateCache(d,nd,prj) {
 	}
 }
 
-function err(e) {console.error(chalk.red(e.stack||e))}
+function err(e) {console.error(C.red(e.stack||e))}
 function msg() {
 	let d=utils.formatDate(new Date(), LogDateFmt);
-	Array.prototype.splice.call(arguments,0,0,chalk.green(`[${d}]`));
+	Array.prototype.splice.call(arguments,0,0,C.green(`[${d}]`));
 	print(...arguments);
 }
 
@@ -1266,5 +1315,5 @@ read.createInterface({input:process.stdin,
 		c.push(m);
 	}
 	try {print('->',await dbCmd(c,0,0))}
-	catch(e) {print('->',chalk.red(e.stack||e))}
+	catch(e) {print('->',C.red(e.stack||e))}
 });

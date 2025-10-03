@@ -4,7 +4,7 @@
 let Usr, Dat, Cat, IDCache, Edit, Dty, DB, WS, LM, LT, LScr,
 Loader, safeHTML, MStack=[], MCmd, NavHist=[], PageLen;
 const HELP_URI="https://github.com/Pecacheu/NLDB",
-R_UC=/[A-Z]/, IDCMaxAge=3600000, ICLen=8,
+R_UC=/[A-Z]/, IDCMaxAge=3600000, ICLen=8, HistMax=10,
 ICExp=24*3600000, TblStrMax=100, SearchDelay=350,
 H_MIN={p:56, l:56, c:100, ct:39, h:87};
 
@@ -47,7 +47,7 @@ onload=() => {try {
 	delete h.AllowedAttributes.id, delete h.AllowedTags.DIV;
 	safeHTML=h.SanitizeHtml;
 	//Header
-	THB.onclick=() => go(`/?${DB._v}t:${DB._i}`);
+	THB.onclick=() => go(`/?${DB._v}t:${DB._i}`,2);
 	SHB.onclick=() => searchMenu();
 	MHB.onclick=userMenu;
 	BACK.onclick=async () => {
@@ -57,27 +57,8 @@ onload=() => {try {
 		} else goBack();
 	}
 	EDIT.onclick=() => {Edit||DB._v[0]==='l'?editor(NE_TYPE[DB._v]):setEdit(1)}
-	SAVE.onclick=async (_,dat=Dat) => {try {
-		if(!dat || !dat._v) return;
-		let d={},c;
-		//Set custom vals
-		await dat._v.children.eachAsync(async e => {
-			if(!e.d.i) return;
-			let k='#'+e.d.i, v=e.i.get?await e.i.get():e.i.value;
-			if(neq(v, dat[k], e.d.v)) d[k]=v,c=1;
-			//Options
-			if(e.i.getOpts) {
-				v=e.i.getOpts();
-				if(neq(v, dat[k+':o'], e.d.o)) d[k+':o']=v,c=1;
-			}
-		});
-		if(c) {
-			await dbPost(DB._v[0]==='l'?'lu':'pu', dat._id, d);
-			for(let k in d) dat[k]=d[k];
-		}
-		setEdit(Dty=0);
-	} catch(e) {err(e)}}
-	//Menu
+	SAVE.onclick=async (_, dat=Dat) => {try {await saveCV(dat)} catch(e) {err(e)}}
+	//Popup Menu
 	MENU.bs=new bootstrap.Modal(MENU), OC.bs=new bootstrap.Offcanvas(OC);
 	MENU.addEventListener('hide.bs.modal', e => {
 		if(MCmd.hide) MCmd.hide(1);
@@ -100,6 +81,7 @@ onload=() => {try {
 		if(MCmd.show) MCmd.show(1);
 	});
 	CFG.onclick=() => editor(DB._v, DB._i);
+	//Sidebar Menu
 	O_QR.onclick=() => genQr(location.href);
 	O_LL.onclick=() => go('?ll:'+Cat._id,2);
 	O_HL.onclick=() => go('?h:'+Cat._id,2);
@@ -264,7 +246,7 @@ function go(uri, force, isBack) {
 		else if(v==='i'||v==='p') rmHist('i','/?p:'+Dat._id);
 		else rmHist(0,p);
 		NavHist.push(p);
-		if(NavHist.length > 5) NavHist.splice(0,1);
+		if(NavHist.length > HistMax) NavHist.splice(0,1);
 	}
 	o=o&&s;
 	if(Dat && (Edit||Dty)) {
@@ -336,12 +318,20 @@ async function plView(skip=0, tbl) {
 	}
 	utils.mkEl('h1',c).textContent=Cat.n;
 	if(tbl) {
-		let t=["Item ID", "Name", "OEM", "Description"];
-		if(!Cat.i) t.push("Serial #", "Qty", "Location");
+		let t=["Item ID", "Name", "OEM", "Description"],v;
+		if(Cat.pv) for(v of Cat.pv) if(v.i) t.push(v.n);
+		if(!Cat.i) {
+			t.push("Serial #", "Qty", "Location");
+			if(Cat.iv) for(v of Cat.iv) if(v.i) t.push(v.n);
+		}
 		tbl=[t];
 		for(d of Dat) {
 			t=[`<a href=/?p:${d._id}>${d._id}</a>`, tblStr(d.n), tblStr(d.m), tblStr(d.d)];
-			if(!Cat.i && d._i) t.push(d._i.s, d._i.q, lnkID(d._i.l,'l'));
+			if(Cat.pv) for(v of Cat.pv) if(v.i) t.push(d['#c_'+v.i]);
+			if(!Cat.i && d._i) {
+				t.push(d._i.s, d._i.q, lnkID(d._i.l,'l'));
+				if(Cat.iv) for(v of Cat.iv) if(v.i) t.push(d._i['#c_'+v.i]);
+			}
 			tbl.push(t);
 		}
 		mkTable(c,tbl);
@@ -418,11 +408,17 @@ async function partView() {
 	//Jump to item
 	if(c || (Cat && !Cat.i && v==='p')) {
 		if(v==='i') for(p of c.children) if(p._d && p._d._id===i) return ivSel(p);
-		if(v==='p' && i===Dat._id) return ivSel(0);
+		if(v==='p' && i===Dat._id) {
+			if(!Cat.i) {
+				c=NavHist[NavHist.length-1];
+				if(c.endsWith(DB._q)) NavHist.pop();
+			}
+			return ivSel(0);
+		}
 	}
 	//Full reload
 	clear();
-	p=v==='p'?i:(await dbGet('i',i)).p; //TODO Get just part ID
+	p=v==='p'?i:await dbGet('pi',i);
 	Dat=await dbGet('p',p), await setCat(Dat._c);
 	if(IDCache) IDCache[Dat._id]=Dat.n;
 	c=utils.mkDiv(CONT,'pv');
@@ -656,26 +652,30 @@ function loadAbort() {
 }
 
 //Draw custom vars
-function drawCV(t, c, dat) {
-	//utils.mkEl('h2',c,'hr').textContent=Cat.n;
-	//TODO Cat vars
-	if(dat.v) {
-		utils.mkEl('h2',c,'hr',null,"Custom");
-		let n=dat._v=utils.mkEl('div',c,'MB'),d,k,v,o;
-		for(d of dat.v) {
-			if(d.i) { //Val override
-				k='#'+d.i, v=dat[k], o=dat[k+':o'], d={...d};
-				if(v!=null) d._v=v; if(o!=null) d.o=o;
+function drawCV(t, par, dat, eDat) {
+	function _draw(dv, db, key, name) {
+		if(dv) {
+			utils.mkEl('h2',par,'hr',null,name);
+			let n=db['_v'+key]=utils.mkEl('div',par,'MB'),d,k,v,o;
+			if(key) key+='_';
+			for(d of dv) {
+				if(d.i) { //Val override
+					k='#'+key+d.i, v=db[k], o=db[k+'!o'], d={...d};
+					if(v!=null) d._v=v; if(o!=null) d.o=o;
+				}
+				cValSet(n,eDat?2:1,d);
+				//TODO Field setting to only show in editor or only show on page
 			}
-			cValSet(n,1,d);
 		}
 	}
+	_draw(Cat[t+'v'], dat||eDat, 'c', Cat.n);
+	if(dat) _draw(dat.v, dat, '', "Custom");
 }
 
 //============================================== Menus ==============================================
 
 const S_TABS={a:"All", p:"Parts", i:"Inventory", l:"Locations", u:"People"},
-F_TYPE={f:"Field", h:"Heading", t:"Text", p:"Item", i:"Inventory", l:"Location", u:"User"},
+F_TYPE={f:"Field", h:"Heading", t:"Text", k:"Link", p:"Item", i:"Inventory", l:"Location", u:"User"},
 F_SHORT={p:"Part", i:"Inv", l:"Loc", u:"User"},
 NE_TYPE={'':'c', c:'p', ct:'p', p:'v', ll:'l', l:'l'},
 A_RD=2**0, A_USR=2**1, A_ITM=2**2, A_UP=2**3, A_CAT=2**4, A_WS=2**5;
@@ -716,23 +716,17 @@ function hideMenu(f) {
 	} else MENU.bs.hide();
 }
 
-function searchMenu(sel='a', iRes) {
+function searchMenu(sel, iRes) {
 	mkMenu();
-	let s=mkInput(MB,"Search for anything...",I_TEXT,null,{nt:1}),
-	tl=utils.mkEl('ul',MB,'nav nav-underline'),
-	rl=utils.mkDiv(MB,'pl'), sa=sel==='a',t,e,ns,ac;
-	if(sa && Cat._st) sel=Cat._st;
-	for(t in S_TABS) {
-		e=utils.mkEl('a',utils.mkEl('li',tl,'nav-item'),'nav-link'+
-			(t===sel?' active':'')+(sa?'':' disabled'),null,S_TABS[t]);
-		e.href='#', e.t=t, e.onclick=sa?sTab:e => e.preventDefault();
-	}
-	if(sa) {
+	let s=mkInput(MB,"Search for anything...",I_TEXT,null,{nt:1}), sEn=!sel, ns,ac;
+	if(sEn) sel=Cat._st||'a';
+	let tl=mkTabs(MB, S_TABS, sel, sEn), rl=utils.mkDiv(MB,'pl');
+	if(sEn) {
 		if(Cat._sq) s.value=Cat._sq;
 		if(Cat._sr) res(Cat._sr, sel);
 	}
-	tl.t=sel, tl.s=s;
-	s.onUpd=async () => {try {
+	tl.t=sel;
+	s.onUpd=tl.onUpd=async () => {try {
 		if(ns) return ns=2;
 		ns=1, setTimeout(() => {
 			let n=ns===2; ns=0; if(n) s.onUpd();
@@ -765,12 +759,6 @@ function searchMenu(sel='a', iRes) {
 	s.onfocus=() => {if(st && !sb) sb=setTimeout(ct,500)}
 	s.onblur=() => {clearTimeout(sb),sb=0}
 	st=setInterval(() => {s.focus(); if(MB.firstChild !== s) ct()},10);
-}
-function sTab(e) {
-	e.preventDefault();
-	let tl=this.parentElement.parentElement,t;
-	for(t of tl.children) t.firstChild.classList.remove('active');
-	this.classList.add('active'), tl.t=this.t, tl.s.onUpd();
 }
 
 function userMenu() {
@@ -818,13 +806,19 @@ async function editor(type, id, res) {try {
 	}
 	async function edit(t, pid, noDb) {
 		let d=D[t], i=I[t], a=[t+(d?'u':'n')], nd={}, k,v,c;
-		if(pid) a.push(pid);
-		if(t!=='s' && t!=='w' && (d||(t!=='c'&&!pid))) a.push((d||Cat)._id);
+		if(!noDb) {
+			if(pid) a.push(pid);
+			if(t!=='s' && t!=='w' && (d||(t!=='c'&&!pid))) a.push((d||Cat)._id);
+		}
+		//Apply Vars
 		for(k in i) {
 			v=i[k];
 			v=v.c&&v.c.hidden ? null : v.get?await v.get():v.value;
 			if(d ? neq(v,d[k]) : valToBool(v)) nd[k]=v,c=1;
 		}
+		//Apply Custom
+		v=await saveCV(d||i,1);
+		for(k in v) nd[k]=v[k],c=1;
 		if(noDb) return nd;
 		a.push(nd);
 		if(d && Dat.cf) a.push(1);
@@ -847,32 +841,43 @@ async function editor(type, id, res) {try {
 		b.title=e?"Edit":"Add";
 	}
 	function custom(t) {
-		let dat=I[t].v={value:D[t]&&D[t].v};
 		utils.mkEl('button', MB, 'btn btn-primary', null, "Custom Fields").onclick=() => {
 			mkMenu("Custom Fields for "+(id?D[t].n:"New "+TN));
-			let h=utils.mkEl('h2', MB, 'hr itl', null, `Custom ${F_TYPE[t]} Fields`),
-			b=utils.mkEl('button', utils.mkDiv(h,'bGrp'), 'rnb');
-			D.ce=utils.mkDiv(MB,'MB'), cBtnSet(b);
-			b.onclick=() => editor('v',0,(_,d) => cValSet(D.ce,0,d));
-			if(dat.value) for(let v of dat.value) cValSet(D.ce,0,v);
-			new Grabable(D.ce);
+			if(t==='c') { //Cat Fields
+				let tl=mkTabs(MB, {p:S_TABS.p, i:S_TABS.i, l:S_TABS.l}, 'p', 1);
+				tl.style.padding=0, (tl.onUpd=() => _customMenu(tl.t, t, tl.t+'v'))();
+			} else _customMenu(t,t,'v');
 			showMenu();
-			menuBtn('show', c => c||D.ce._g.update(1));
-			menuBtn('hide', c => {
-				if(!c) return;
-				let v=[],n=0,i,e;
-				c=D.ce.children;
-				for(e of c) {
-					e=e.d;
-					if(e.i===true) { //Find new ID
-						do {i=alpha(n++)} while(c.each(x => i===x.d.i?1:null));
-						e.i=i;
-					}
-					v.push(e);
-				}
-				dat.value=v;
-			});
 		}
+	}
+	function _customMenu(t, ot, iKey) {
+		//Tab switch
+		let m=MB.children[1];
+		if(m) MCmd.hide(1),m.textContent='';
+		else m=utils.mkDiv(MB);
+		//Draw menu
+		let dat=I[ot][iKey] || (I[ot][iKey]={value:D[ot]&&D[ot][iKey]}),
+		h=utils.mkEl('h2', m, 'hr itl', null, `Custom ${F_TYPE[t]} Fields`),
+		b=utils.mkEl('button', utils.mkDiv(h,'bGrp'), 'rnb');
+		D.ce=utils.mkDiv(m,'MB'), cBtnSet(b);
+		b.onclick=() => editor('v',0,(_,d) => cValSet(D.ce,0,d));
+		if(dat.value) for(let v of dat.value) cValSet(D.ce,0,v);
+		new Grabable(D.ce);
+		menuBtn('show', c => c||D.ce._g.update(1));
+		menuBtn('hide', c => {
+			if(!c) return;
+			let v=[],n=0,i,e;
+			c=D.ce.children;
+			for(e of c) {
+				e=e.d;
+				if(e.i===true) { //Find new ID
+					do {i=alpha(n++)} while(c.each(x => i===x.d.i?1:null));
+					e.i=i;
+				}
+				v.push(e);
+			}
+			dat.value=v;
+		});
 	}
 
 	//Draw menu
@@ -884,8 +889,8 @@ async function editor(type, id, res) {try {
 		input('h', "Track History", I_SWITCH, D.c?D.c.h:1);
 		input('i', "Separate Items & Inventory", I_SWITCH, D.c?D.c.i:1);
 		input('e', "External Locations", I_MULTI, null, {o:catOpts()});
-		if(!CL.length) I.c.e.parentElement.hidden=1;
-		//TODO Cat custom fields
+		if(!CL.length) I.c.e.c.hidden=1;
+		custom(T);
 	break; case 'p': //Part
 		await menu('p',"Part");
 		input('n', "Name / PN", I_TEXT);
@@ -894,23 +899,25 @@ async function editor(type, id, res) {try {
 		input('i', "Icon", I_FILE);
 		//TODO s:subId
 		custom(T);
+		drawCV(T,MB,D.p,I.p);
 		if(Cat.i) break;
 	case 'i': //Inventory
 		let ii=T!=='p';
 		if(ii) await menu('i',"Inventory of "+Dat.n);
 		else {
-			T='i', D.i=id&&Dat._i, utils.mkEl('hr',MB);
+			T='i', D.i=id&&D.p._i, utils.mkEl('hr',MB);
 			utils.mkEl('h2',MB,null,null,"Inventory");
 		}
 		input('q', "Quantity", I_NUM, null, {min:1});
 		input('l', "Location", 'l');
 		input('s', "S/N", I_TEXT);
-		//TODO Cat fields, subcat fields, custom fields
+		drawCV(T,MB,D.i,I.i);
 		OK=async () => {
 			let pid=Dat._id;
 			if(!ii) {
+				if(id) id=D.p._id;
 				pid=await edit('p');
-				if(id) id=Dat._i._id;
+				if(id) id=D.i._id;
 			}
 			try {await edit('i', id?0:pid)}
 			catch(e) {
@@ -943,7 +950,7 @@ async function editor(type, id, res) {try {
 		i.d.onchange=t => {
 			['v','e','p','m','x'].forEach(n => {if(i[n]) i[n].c.remove(), delete i[n]});
 			if(typeof t!=='string' && !(t=i.d.get())) t=i.d.value=1;
-			if(t===I_LINK) input('v',"URI",I_TEXT);
+			if(t==='k') input('v',"URI",I_EMAIL);
 			else {
 				let o;
 				if(t===I_DROP || t===I_MULTI) {
@@ -971,8 +978,8 @@ async function editor(type, id, res) {try {
 			if(i.e && (i.e.c.hidden = fv.checked)) i.e.checked=0;
 		}
 		(i.t.onchange=() => {
-			let t=i.t.value, dv=t==='p'||t==='i'||t==='l'||t==='u';
-			if(fv.c.hidden = t==='t'||t==='h') fv.checked=0;
+			let t=i.t.value, dv=t==='k'||t==='p'||t==='i'||t==='l'||t==='u';
+			if(fv.c.hidden = t==='t'||t==='h'||t==='k') fv.checked=0;
 			fv.onchange();
 			i.n.c.replaceWith((i.n=t==='t'?ti:ni).c);
 			i.d.c.hidden = t!=='f';
@@ -1034,7 +1041,7 @@ async function editor(type, id, res) {try {
 				menuBtn(M_DEL, () => {delete ic[v], b.del()});
 			}});
 			(I.w.q.onUpd=() => {
-				let v=I.w.q.checked; I.q.v.parentElement.hidden=!v;
+				let v=I.w.q.checked; I.q.v.c.hidden=!v;
 				if(!v) I.q.v.textContent='',ic={};
 			})();
 			T='w';
@@ -1128,15 +1135,17 @@ async function editor(type, id, res) {try {
 } catch(e) {err(e)}}
 
 function cValSet(p,io,d) {
-	let i,o;
+	let dt=d.d, cv=io===1||io===2, i,o;
 	switch(d.t) {
+	case 'k': //Link
+		dt=I_LINK;
 	case 'f': case 'p': case 'i': case 'l': case 'u': //Field
-		if(d.d===I_DROP || d.d===I_MULTI) o={r:d.v, o:d.o, e:d.e};
-		else if(d.d===I_NUM) o={r:d.v, min:d.m, max:d.x, dm:d.p};
+		if(dt===I_DROP || dt===I_MULTI) o={r:d.v, o:d.o, e:d.e};
+		else if(dt===I_NUM) o={r:d.v, min:d.m, max:d.x, dm:d.p};
 		else o={r:d.v};
-		i=mkInput(p, d.n, d.d||d.t, d._v!=null?d._v:d.v, o);
-		i.setEn(o=io===1&&d.i);
-		if(o) i.onUpd=() => Edit||(setEdit(1),Dty=2);
+		i=mkInput(p, d.n, dt||d.t, d._v!=null?d._v:d.v, o);
+		i.setEn(o=cv&&d.i);
+		if(io===1 && o) i.onUpd=() => Edit||(setEdit(1),Dty=2);
 		i=i.c;
 	break; case 'h': //Heading
 		i=utils.mkEl('h2', p, 'hr');
@@ -1144,17 +1153,20 @@ function cValSet(p,io,d) {
 	break; case 't': //Text
 		i=utils.mkEl('p', p, 'desc');
 		i.textContent=d.n;
-	break; default: //TODO
+	break; default:
 		i=utils.mkEl('code', p, null, {display:'block'});
 		i.textContent=JSON.stringify(d);
 	}
 	i.d=d;
-	if(io!==1) {
+	if(!cv) {
 		if(io) {
 			if(d.i) d.i=io.d.i||true; //Keep old ID
 			io.replaceWith(i);
 		}
-		i.onclick=() => editor('v',i,(id,d) => cValSet(p,id,d));
+		i.onclick=e => {
+			e.preventDefault();
+			editor('v',i,(id,d) => cValSet(p,id,d));
+		}
 		i.classList.add('EClk');
 	}
 }
@@ -1247,6 +1259,34 @@ async function setCat(c,gc) {
 	O_UL.hidden=!Usr || DB._v==='ul';
 }
 
+//Read & save custom vals
+async function saveCV(dat, noDb) {
+	if(!dat) return;
+	let d={};
+	await _readCV(dat,d,'');
+	await _readCV(dat,d,'c');
+	if(noDb) return d;
+	if(Object.keys(d).length) {
+		await dbPost(DB._v[0]==='l'?'lu':'pu', dat._id, d);
+		for(let k in d) dat[k]=d[k];
+	}
+	setEdit(Dty=0);
+}
+async function _readCV(dat, nd, key) {
+	let cl=dat['_v'+key]; if(!cl) return;
+	if(key) key+='_';
+	await cl.children.eachAsync(async e => {
+		if(!e.d.i) return;
+		let k='#'+key+e.d.i, v=e.i.get?await e.i.get():e.i.value;
+		if(neq(v, dat[k], e.d.v)) nd[k]=v;
+		//Options
+		if(e.i.getOpts) {
+			v=e.i.getOpts();
+			if(neq(v, dat[k+'!o'], e.d.o)) nd[k+'!o']=v;
+		}
+	});
+}
+
 async function _gc(t) {
 	let d=await dbGet(...arguments);
 	if(d.n) throw "Too many entities of type "+t;
@@ -1265,8 +1305,8 @@ I_FILE=6, I_SWITCH=7, I_LINK=8, I_DROP=9, I_MULTI=10,
 I_DATE=11, I_DATETIME=12,
 I_TYPE={
 	[I_TEXT]:"Text", [I_AREA]:"Text Area", [I_NUM]:"Number", [I_EMAIL]:"Email",
-	[I_COLOR]:"Color", [I_FILE]:"Image / File", [I_SWITCH]:"Switch", [I_LINK]:"Link",
-	[I_DROP]:"Dropdown", [I_MULTI]:"Multi-Select", [I_DATE]:"Date", [I_DATETIME]:"Date & Time"
+	[I_COLOR]:"Color", [I_FILE]:"Image / File", [I_SWITCH]:"Switch", [I_DROP]:"Dropdown",
+	[I_MULTI]:"Multi-Select", [I_DATE]:"Date", [I_DATETIME]:"Date & Time"
 }, I_SKIP={};
 
 function mkInput(par, name, type, val, opts) {
@@ -1521,6 +1561,24 @@ function mkInput(par, name, type, val, opts) {
 	return i;
 }
 
+function mkTabs(par, tabs, sel, en) {
+	let t,e;
+	par=utils.mkEl('ul',MB,'nav nav-underline');
+	for(t in tabs) {
+		e=utils.mkEl('a',utils.mkEl('li',par,'nav-item'),'nav-link'+
+			(t===sel?' active':'')+(en?'':' disabled'),null,tabs[t]);
+		e.href='#', e.t=t, e.onclick=en?_sTab:e => e.preventDefault();
+	}
+	par.t=sel;
+	return par;
+}
+function _sTab(e) {
+	e.preventDefault();
+	let tl=this.parentElement.parentElement,t;
+	for(t of tl.children) t.firstChild.classList.remove('active');
+	this.classList.add('active'), tl.t=this.t, tl.onUpd();
+}
+
 //============================================== Support ==============================================
 
 function err(e) {
@@ -1749,10 +1807,12 @@ function genQr(uri, name) {
 	//TODO Toggle switch for name
 	name=document.title.slice(7);
 	mkMenu("QR Code");
-	let qr=new QRCodeStyling({width:2048, height:2048, margin:name?100:50, data:uri,
+	let c1=`hsl(${DB.style.getPropertyValue('--h1')}, 90%, 60%)`,
+	c2=`hsl(${DB.style.getPropertyValue('--h2')}, 10%, 30%)`,
+	qr=new QRCodeStyling({width:2048, height:2048, margin:name?100:50, data:uri,
 		image:'/logo.png', qrOptions:{errorCorrectionLevel:'M'}, imageOptions:{imageSize:.5},
-		dotsOptions:{type:'square',color:'#f56d3c'}, cornersSquareOptions:{type:'extra-rounded',color:'#5a5a5e'},
-		cornersDotOptions:{type:'dot',color:'#5a5a5e'}});
+		dotsOptions:{type:'square',color:c1}, cornersSquareOptions:{type:'extra-rounded',color:c2},
+		cornersDotOptions:{type:'dot',color:c2}});
 	qr.append(MB);
 	let e=MB.lastChild;
 	if(name) qr._canvasDrawingPromise.then(() => {
