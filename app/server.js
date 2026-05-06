@@ -1,5 +1,5 @@
 //NLDB, Pecacheu 2025. GNU GPL v3
-const VER='2.0 Beta 7';
+const VER='2.0.0';
 
 import fs from 'fs/promises';
 import read from 'readline';
@@ -8,6 +8,7 @@ import http from 'http';
 import https from 'https';
 import C from 'chalk';
 import mdb from 'mongodb';
+import TypeSense from 'typesense';
 import ar2 from 'argon2';
 import sharp from 'sharp';
 import {RateLimiterMemory} from 'rate-limiter-flexible';
@@ -20,6 +21,7 @@ import 'raiutils';
 const ConfFmt={
 	debug:{t:'int',min:0,max:2,req:0},
 	dbUri:{t:'str'},
+	tsHost:{t:'str'},
 	host:{t:'str'},
 	mail:{t:'str'},
 	mailPass:{t:'str'},
@@ -41,7 +43,6 @@ const MsMin=60000,
 MsHour=60*MsMin,
 MsDay=24*MsHour,
 TknCheckInt=MsHour,
-LTMDown=5*MsMin,
 LimWaitPoll=100, //.1s
 LimWaitMax=30000/LimWaitPoll, //30s
 NameMax=1000,
@@ -49,6 +50,7 @@ DataMax=10000,
 MaxLogLen=500,
 MaxPageSizeAnon=200,
 MaxPageSize=2000,
+MaxSearch=10,
 Web=path.join(App, "../web"),
 Res=Web+"/u",
 VDir={'utils.js': path.join(App, "node_modules/raiutils/utils.min.js")},
@@ -68,7 +70,7 @@ C_VAL = C.cyan,
 AuthLim = new RateLimiterMemory({points:2, duration:4}),
 UpLim = new RateLimiterMemory({points:10, duration:1});
 
-let WS, LOvr=1, DB, Cat, CatID, CatMagic, Usr, Tkn,
+let WS, LOvr=1, TS, DB, Cat, CatID, CatMagic, Usr, Tkn,
 Lock, CID, RDU, OAuthUri, TknUri, UsrInfoUri;
 
 if(Conf.debug>1) router.debug=1;
@@ -83,8 +85,9 @@ if(Conf.auth === 'wildapricot') {
 }
 
 async function begin() {
+	await utils.waitInit();
 	const ips=utils.getIPs(), [sysOS, arch, cpu]=utils.getOS();
-	print("IP:",ips,`OS: ${sysOS}, ${arch}\nCPU: ${cpu}\n\n`+chalk.yellow(`NLDB v${VER}`));
+	print("IP:",ips,`OS: ${sysOS}, ${arch}\nCPU: ${cpu}\n\n`+C.yellow(`NLDB v${VER}`));
 
 	print("Loading icons...");
 	await fs.mkdir(Res, {recursive:true});
@@ -94,17 +97,40 @@ async function begin() {
 	print("Loading database...");
 	DB = new mdb.MongoClient(Conf.dbUri).db('nldb');
 	Cat = DB.collection('cat'), DB.u = DB.collection('usr');
+	let c=await DB.u.findOne({_id:0});
+	if(!c) await DB.u.insertOne(WS);
+	else if(c._v !== VER) { //Version Migration
+		print(C.bgBlue(`Migrating from ${c._v} to ${VER}`));
+		await Cat.dropIndexes(), await DB.u.dropIndexes();
+		for await(c of DB.listCollections()) {
+			let d=DB.collection(c=c.name);
+			await d.dropIndexes();
+			//TODO TEMP migration to new name format
+			if(c.startsWith('itm.')) await DB.renameCollection(c, c.slice(4)+'.p');
+			else if(c.startsWith('inv.')) await DB.renameCollection(c, c.slice(4)+'.i');
+			else if(c.startsWith('loc.')) await DB.renameCollection(c, c.slice(4)+'.l');
+			else if(c.startsWith('log.')) await DB.renameCollection(c, c.slice(4)+'.h');
+		}
+		await DB.u.updateOne({_id:0}, {$set:{_v:VER}});
+	}
 	await Cat.createIndex({m:1}, {unique:1});
-	await DB.u.createIndex({n:'text', e:'text'});
 	await mkIndexes(DB.u, [{n:1},{e:1}], {unique:1});
-	if(!await DB.u.findOne({_id:0})) await DB.u.insertOne(WS);
-	setInterval(mLoop, TknCheckInt);
-	await mLoop(1);
+
+	print("Loading search...");
+	c=new URL(Conf.tsHost);
+	TS = new TypeSense.Client({
+		nodes:[{protocol:c.protocol.slice(0,-1), host:c.hostname, port:c.port}],
+		apiKey:'xyz', connectionTimeoutSeconds:2
+	});
+	TS._f={};
+	//Recreate indexes on restart
+	for(c of await TS.collections().retrieve()) await TS.collections(c.name).delete();
+	await mLoop(1), setInterval(mLoop, TknCheckInt);
 
 	const rqCb=async (rq,re) => {
 		if(Conf.debug>1) msg("[REQ]",rq.url);
 		re.sendDate=false; let r,e;
-		try {(r=await onReq(rq,re))} catch(er) {e=er} finally {
+		try {r=await onReq(rq,re)} catch(er) {e=er} finally {
 			dbUnlock(rq); if(r||e) endReq(re,r,e); else router.handle(Web,rq,re,VDir);
 		}
 	}
@@ -217,7 +243,7 @@ function endReq(res,r,e) {
 	}
 	if(e) err(e);
 	else if(r===2) return;
-	else {
+	else if(Conf.debug) {
 		let t=typeof r;
 		if(t==='object') r=JSON.stringify(r);
 		else if(t!=='string') r=r.toString();
@@ -225,6 +251,140 @@ function endReq(res,r,e) {
 			(r.length>MaxLogLen?r.slice(0,MaxLogLen)+'...':r):"Done"));
 	}
 	res.writeHead(e?500:200,''), res.end(e?e.toString():r);
+}
+
+//============================================== Search ==============================================
+
+const IDX={
+	u:{n:1, e:1},
+	p:{n:1, m:1, d:1, i:0},
+	i:{s:1, q:'int32', p:0, l:0},
+	l:{n:1, _fn:1}
+};
+IDX.a={...IDX.p, ...IDX.i, ...IDX.l};
+
+async function mkTSIndex(c) {
+	let n=c?c._id:'usr', fd=c?IDX.a:IDX.u,f,t,d;
+	//Create index
+	if(!(n in TS._f)) {
+		t=c?[{name:'_t', type:'string', facet:true}]:[];
+		for(f in fd) {
+			d=fd[f], f={name:f, type:'string', optional:true};
+			if(d===1) f.infix=true; else {f.index=false; if(d) f.type=d}
+			t.push(f);
+		}
+		await TS.collections().create({name:n, fields:t}), TS._f[n]=1;
+	}
+	//Sync docs
+	await (c?['p','i','l']:['u']).eachAsync(async t => {
+		let tbl=getTbl(t,c||0),m=[],p={},nd=[],f,d;
+		print(C.bgCyan("Syncing index "+tbl.s.namespace.collection));
+		for(f in IDX[t]) m.push({[f]:{$exists:1}}), p[f]=1;
+		for await(d of tbl.find({$or:m}, {projection:p})) if(d._id) {
+			d.id=d._id, delete d._id; if(c) d._t=t;
+			nd.push(d);
+		}
+		if(nd.length) await TS.collections(n).documents().import(nd, {action:'upsert'});
+	});
+}
+async function dropTSIndex(c) {
+	await TS.collections(c._id).delete().catch(()=>{});
+}
+
+function _sync(tbl, fn) {
+	let cn = tbl.c?tbl.c._id:'usr';
+	(async() => {try {await fn(TS.collections(cn))}
+	catch(e) {err(new Error("CacheError", {cause:e}))}})();
+}
+function _updDat(tbl, dat, id) {
+	let s=dat.$set, u=dat.$unset;
+	if(s||u) {
+		let nd={},f,v,h;
+		if(id) nd.id=id;
+		for(f in IDX[tbl.t]) {
+			v=u&&f in u?null:s?s[f]:undefined;
+			if(v!==undefined) nd[f]=v, h=1;
+		}
+		if(h) return nd;
+	}
+}
+
+const R_TSEsc=/`/g, R_SM=/<(\/)?mark>/g;
+
+//Update DB & sync index
+async function insOne(tbl, dat) {
+	await tbl.insertOne(dat);
+	let nd,f,v;
+	for(f in IDX[tbl.t]) {
+		v=dat[f];
+		if(v!==undefined) (nd||(nd={id:dat._id}))[f]=v;
+	}
+	if(nd) {
+		if(tbl.c) nd._t=tbl.t;
+		_sync(tbl, c => c.documents().upsert(nd));
+	}
+}
+async function delOne(tbl, id) {
+	let d=await tbl.deleteOne({_id:id});
+	if(d.deletedCount !== 1) throw "Entity not found";
+	_sync(tbl, c => c.documents(id).delete({ignore_not_found:true}));
+}
+async function delMany(tbl, pat) {
+	await tbl.deleteMany(pat);
+	let f=[],p;
+	//Escape filter vals
+	for(p in pat) f.push(`${p}:=\`${pat[p].replace(R_TSEsc, '\\`')}\``);
+	f={ignore_not_found:true, filter_by:f.join('&&')};
+	_sync(tbl, c => c.documents().delete(f));
+}
+async function updOne(tbl, id, dat) {
+	let d=await tbl.updateOne({_id:id}, dat);
+	if(d.matchedCount !== 1) throw "Entity not found";
+	if(d=_updDat(tbl,dat,id)) _sync(tbl, c => c.documents().update(d));
+	//TODO Perhaps we should use a delayed write buffer with the bulk endpoint for performance?
+}
+async function updAll(tbl, dat) {
+	await tbl.updateMany({}, dat);
+	if(dat=_updDat(tbl,dat)) {
+		let f=tbl.c?{filter_by:'_t:='+tbl.t}:{};
+		_sync(tbl, c => c.documents().update(dat,f));
+	}
+}
+
+function _sDoc(r) {
+	let d=r.document, h=r.highlight,k;
+	d._id=d.id, delete d.id, delete d._t;
+	for(k in h) d[k]=h[k].snippet.replace(R_SM,'<$1k>');
+	return d;
+}
+async function search(cat, tkn, type, query, _ne) {
+	if(type==='u' && !hasAuth(tkn,A_USR)) return {}; //Req A_USR for user search
+	let r=IDX[type],q=[],d=[],f,g;
+	for(f in r) if(r[f]===1) q.push(f), d.push('fallback');
+	q={q:query, query_by:q, infix:d, group_limit:MaxSearch, limit:MaxSearch};
+	if(type!=='u') {
+		if(type==='a') q.group_by='_t',g=1;
+		else q.filter_by='_t:='+type;
+	}
+	r=TS.collections(type==='u'?'usr':cat._id).documents().search(q);
+	//Search ext locs
+	if(!_ne && (type==='a' || type==='l') && cat.e) {
+		d={l:[]}, q=[r];
+		for(f of cat.e) {
+			if(!(f=CatID[f])) throw "Bad Ext Cat ID #"+f;
+			if(hasAuth(tkn,A_RD,f)) q.push(search(f, tkn, 'l', query, 1));
+		}
+		q=await Promise.all(q);
+		q.each(s => {d.l.push(...s.l)},1), r=q[0];
+	} else d={}, r=await r;
+	//Parse result
+	q=r.grouped_hits||[r.hits];
+	for(f of q) {
+		if(g) type=f.group_key[0], f=f.hits;
+		f.forEach((r,i) => f[i]=_sDoc(r));
+		d[type]=f;
+	}
+	return d;
 }
 
 //============================================== Database ==============================================
@@ -249,23 +409,28 @@ function WSCk(t) {
 	return utils.setCookie('w', t.join('~'), -1);
 }
 
-async function loadCats() {
+async function loadCats(mkIdx) {
 	CatID={}, CatMagic=[];
-	for await(let c of Cat.find()) await addCat(c);
+	for await(let c of Cat.find()) await addCat(c,mkIdx);
 }
-async function addCat(nc) {
-	let id=nc._id,c = CatID[id] = CatMagic[nc.m] = {
-		itm:DB.collection(`itm.${id}`), inv:DB.collection(`inv.${id}`),
-		loc:DB.collection(`loc.${id}`), log:DB.collection(`log.${id}`),
+async function addCat(nc, mkIdx) {
+	let id=nc._id, c = CatID[id] = CatMagic[nc.m] = {
+		itm:DB.collection(`${id}.p`), inv:DB.collection(`${id}.i`),
+		loc:DB.collection(`${id}.l`), log:DB.collection(`${id}.h`),
 		_id:id, m:nc.m
 	}
+	c.itm.t='p', c.inv.t='i', c.loc.t='l', c.log.t='h';
+	c.itm.c=c.inv.c=c.loc.c=c.log.c=c;
 	await updateCat(c,nc);
-	await c.itm.createIndex({_id:'text', n:'text', d:'text', m:'text'});
-	await c.itm.createIndex({n:1}, {unique:1});
-	await mkIndexes(c.inv, [{p:1},{l:1},{_id:'text', s:'text'}]);
-	await c.inv.createIndex({s:1,p:1}, {unique:1});
-	await mkIndexes(c.loc, [{p:1},{_id:'text', n:'text', _fn:'text'}]);
-	await c.loc.createIndex({n:1}, {unique:1});
+	if(mkIdx) {
+		if(mkIdx===2) await mkTSIndex(c);
+		await c.itm.createIndex({n:1}, {unique:1});
+		await mkIndexes(c.inv, [{p:1}, {l:1}]);
+		await c.inv.createIndex({s:1,p:1}, {unique:1,
+			partialFilterExpression:{s:{$type:'string'}}});
+		await c.loc.createIndex({p:1});
+		await c.loc.createIndex({n:1}, {unique:1});
+	}
 }
 async function updateCat(c,nc) {
 	updateCache(c,nc,CatDataFmt);
@@ -276,7 +441,7 @@ function mkIndexes(db, il, opts) {
 	return il.eachAsync(async d => {await db.createIndex(d,opts)});
 }
 
-async function loadUsrs() {
+async function loadUsers() {
 	Usr={}, Tkn={};
 	for await(let u of DB.u.find()) {
 		if(!u._id) continue;
@@ -284,6 +449,7 @@ async function loadUsrs() {
 		for(let k in u.k) Tkn[k]=u;
 		Usr[u._id]=u;
 	}
+	await mkTSIndex();
 }
 
 //History Types
@@ -319,7 +485,7 @@ I_FILE=6, I_SWITCH=7, I_DROP=9, I_MULTI=10,
 I_DATE=11, I_DATETIME=12;
 
 //Default Workspace Config
-WS={_id:0, r:true, a:{g:A_DEF}, c1:0xF25D26, c2:0x6ABF40};
+WS={_id:0, _v:VER, r:true, a:{g:A_DEF}, c1:0xF25D26, c2:0x6ABF40};
 
 //============================================== Commands ==============================================
 
@@ -341,8 +507,7 @@ CVField={
 CVFmt={t:'list', min:0, f:[
 	//Field
 	{...CVField, d:{t:'int',min:I_TEXT,max:I_AREA}, v:{t:'str'}},
-	{...CVField, d:{t:'int',val:I_NUM}, m:{t:'float'}, x:{t:'float'},
-		p:{t:'int',min:0}, v:{t:'float'}}, //TODO Dynamic min/max based on m/x
+	{...CVField, d:{t:'int',val:I_NUM}, m:{t:'float'}, x:{t:'float'}, p:{t:'int',min:0}, v:{t:'float'}},
 	{...CVField, d:{t:'int',val:I_EMAIL}, v:{t:'str',f:EmailFmt}},
 	{...CVField, d:{t:'int',val:I_COLOR}, v:{t:'int',min:0,max:0xFFFFFF}},
 	{...CVField, d:{t:'int',val:I_FILE}, v:URLOpt},
@@ -469,8 +634,7 @@ async function dbCmd(q,req,res) {
 			if(WS.e && !j.e.endsWith('@'+WS.e)) throw "Email not authorized on this domain";
 		}
 		schema.checkSchema(j, UsrDataFmt, 1);
-		d=await DB.u.updateOne({_id:t._id}, dbSet(j));
-		if(d.matchedCount !== 1) throw new TknExpErr();
+		await updOne(DB.u, t._id, dbSet(j));
 		updateCache(t,j);
 		return 1;
 	case 'lo': //Log Out
@@ -597,15 +761,13 @@ async function dbCmd(q,req,res) {
 		asType(q,3,0,"Name",NameMax);
 		n=q[2], j=q[3];
 		if(n==='a') {
-			d=await Promise.all([
-				search(c,t,'p',j), search(c,t,'i',j),
-				search(c,t,'l',j), search(0,t,'u',j)
-			]);
+			d=await Promise.all([search(c,t,'a',j), search(0,t,'u',j)]);
 			c={};
-			for(n of d) if(n[1].length) c[n[0]]=n[1];
+			for(n of d) for(t in n) if((j=n[t]).length)
+				t in c?c[t].push(...j):(c[t]=j);
 			return c;
 		}
-		return (await search(c,t,n,j))[1];
+		return await search(c,t,n,j);
 	case 'ic': //ID Cache [cid]
 		if(q.length !== 2) throw "Bad Args";
 		if(!(c=CatID[q[1]])) throw "Bad Cat ID";
@@ -635,9 +797,9 @@ async function dbCmd(q,req,res) {
 		}
 		j=q[1];
 		//Custom vars
-		for(n of CVarType) checkCVars(j[n+'v'],{},0,0,n);
+		for(d of CVarType) checkCVars(j[d+'v'],{},0,0,d);
 		await Cat.insertOne(c={_id:id, m:n, ...j});
-		await addCat(c);
+		await addCat(c,2);
 		return id;
 	/*case 'sn': //New SubCat [cid, name] -> id
 		reqAuth(t,A_CAT);
@@ -673,10 +835,9 @@ async function dbCmd(q,req,res) {
 		q.cat=c;
 		checkCVars(j.v, q);
 		setCVals(q.v, j.v, q, j);
-		await q.tbl.insertOne(j);
-		if(q.i && !c.i) { //Single Inv
-			await c.itm.updateOne({_id:q[1]}, {$set:{_i:id}});
-		}
+		await insOne(q.tbl, j);
+		if(q.i && !c.i) //Single Inv
+			await updOne(q.tbl, q[1], {$set:{_i:id}});
 		d=q.i?{q:j.q, p:j.p, l:j.l}:{n:j.n};
 		if(q.l && j.p) d.h=j.p;
 		dbLog(c, getOf(q,LOG_PC,LOG_IC,LOG_LC), id, q[0][0], t, n, d);
@@ -699,7 +860,7 @@ async function dbCmd(q,req,res) {
 			if(!(q.j=j[n+'v'])) continue;
 			q.q={cat:c, tbl:getTbl(n,c), cf:!!q[3]};
 			checkCVars(q.j, q.q, q.del={}, c, n);
-			if(q.del.$unset) await q.q.tbl.updateMany({}, q.del);
+			if(q.del.$unset) await updAll(q.q.tbl, q.del);
 		}
 		d=await Cat.updateOne({_id:q[1]}, dbSet(j));
 		if(d.matchedCount !== 1) throw "Cat not found";
@@ -739,21 +900,20 @@ async function dbCmd(q,req,res) {
 			checkCVars(j.v, q, q.j, a);
 			setCVals(q.v, j.v||a.v, q, q.j);
 		}
-		d=await q.tbl.updateOne({_id:id}, q.j);
-		if(d.matchedCount !== 1) throw "Entity not found";
+		await updOne(q.tbl, id, q.j);
 		if(q.d && q.d.c) { //Update fn for all descendants
 			let v,p=[],fn=a => {for(v of a.c) {
-				p.push(q.tbl.updateOne({_id:v._id}, {$set:{_fn:v._fn}}));
+				p.push(updOne(q.tbl, v._id, {$set:{_fn:v._fn}}));
 				if(v.c) fn(v);
 			}}
 			fn(q.d);
 			await Promise.all(p);
 		}
 		if(q[0]==='lu' && 'p' in j) {
-			dbLog(c, LOG_LM, id, q[0][0], t, n, {o:q.ol, h:j.p});
+			dbLog(c, LOG_LM, id, q.t, t, n, {o:q.ol, h:j.p});
 		} else if(q[0]==='iu') {
-			if('l' in j) dbLog(c, LOG_IM, id, q[0][0], t, n, {p:q.p, o:q.ol, h:j.l});
-			if('q' in j) dbLog(c, LOG_IA, id, q[0][0], t, n, {p:q.p, o:q.oq, h:j.q});
+			if('l' in j) dbLog(c, LOG_IM, id, q.t, t, n, {p:q.p, o:q.ol, h:j.l});
+			if('q' in j) dbLog(c, LOG_IA, id, q.t, t, n, {p:q.p, o:q.oq, h:j.q});
 		}
 		return 1;
 	case 'uu': //User Update [id, data]
@@ -773,9 +933,8 @@ async function dbCmd(q,req,res) {
 		if(q.length !== 2) throw "Bad Args";
 		if(!(c=CatID[q[1]])) throw "Bad ID";
 		await dbLock(req);
-		c.itm.drop(), c.inv.drop(), c.loc.drop(), c.log.drop();
 		d=await Cat.deleteOne({_id:q[1]});
-		await loadCats();
+		await Promise.all([dropTSIndex(c), loadCats()]);
 		if(d.deletedCount !== 1) throw "Cat not found";
 		return 1;
 	//TODO case 'sd': //Del SubCat
@@ -789,14 +948,9 @@ async function dbCmd(q,req,res) {
 			let a=await q.tbl.findOne({_id:id});
 			if(!a) throw "Entity not found";
 			q.p=a.p;
-			if(!c.i) { //Delete part w/ inv in Single Inv
-				await c.itm.deleteOne({_id:q.p});
-			}
-		} else if(q[0]==='pd') {
-			//TODO Delete all inv of part
-		}
-		d=await q.tbl.deleteOne({_id:id});
-		if(d.deletedCount !== 1) throw "Entity not found";
+			if(!c.i) await delOne(c.itm, q.p); //Del part w/ inv in Single Inv
+		} else if(q[0]==='pd') await delMany(c.inv, {p:q.p});
+		await delOne(q.tbl, id);
 		dbLog(c, getOf(q,LOG_PD,LOG_ID,LOG_LD), id, q[0][0],
 			t, q[2], q[0]==='id'?{p:q.p}:null);
 		return 1;
@@ -834,24 +988,6 @@ async function dbLog(cat, type, eid, eType, tkn, cmnt, data) {
 function getCmnt(d) {
 	asType(d,'_h',0,"Comment",NameMax,1);
 	let h=d._h; delete d._h; return h;
-}
-
-async function search(cat, tkn, type, query, noExt) {
-	if(type==='u' && !hasAuth(tkn,A_USR)) return [type,[]]; //Req A_USR for user search
-	let o={score:{$meta:'textScore'}, sort:{score:{$meta:'textScore'}}},
-		p=getOf(type,ItmProj,InvProj,LocProj,0,UsrProj);
-	if(p) o.projection=p;
-	let res = getTbl(type,cat).find({$text:{$search:query}},o).toArray();
-	//Search ext locs
-	if(!noExt && type==='l' && cat.e) {
-		res=[res];
-		for(o of cat.e) {
-			if(!(o=CatID[o])) throw "Bad Ext Cat ID #"+o;
-			if(hasAuth(tkn,A_RD,o)) res.push(search(o, tkn, type, query, 1));
-		}
-		res=[].concat(...await Promise.all(res));
-	} else res=await res;
-	return noExt?res:[type, res];
 }
 
 async function getCache(cat, type, dat) {
@@ -895,7 +1031,7 @@ function checkCVars(cVar, q, j, jOld, key='') {
 		c=Object.keys(q.del);
 		if(c.length) {
 			print(`Delete ${j.n} (#${j._id}) Unused CVs:`,c);
-			q.ltm.push(q.tbl.updateOne({_id:j._id}, {$unset:q.del}));
+			q.ltm.push(updOne(q.tbl, j._id, {$unset:q.del}));
 		}
 	}
 }
@@ -911,9 +1047,8 @@ function cvToDict(cv) {
 //Extract custom vals from data dict
 function getCVals(j) {
 	let k,cv;
-	for(k in j) if(k.startsWith('#')) {
+	for(k in j) if(k.startsWith('#'))
 		(cv||(cv={}))[k]=j[k], delete j[k];
-	}
 	return cv;
 }
 
@@ -942,9 +1077,7 @@ function setCVals(cVal, cVar, q, j) {
 		} else i=c.v, c.v=v;
 		schema.checkSchema(c, CVFmt.f);
 		//Set or unset val
-		if(q.ltm) continue;
-		//TODO TEMP
-		console.log(k, JSON.stringify(v), JSON.stringify(i), JSON.stringify(v)!==JSON.stringify(i));
+		if(q.ltm) continue; //Check schema only
 		if(i==null ? valToBool(v) : JSON.stringify(v)!==JSON.stringify(i)) {
 			if(q.upd) (j.$set||(j.$set={}))[k]=v; else j[k]=v;
 		} else if(q.upd) (j.$unset||(j.$unset={}))[k]=1;
@@ -1030,7 +1163,7 @@ async function getAuth(req,q) {try {
 			u.n=n.charAt(0).toUpperCase()+(x!==-1 ? n.slice(1,x)+n.charAt(x+1).toUpperCase() : n.slice(1));
 			u.p=await ar2.hash(t.p, {hashLength:48});
 		} else u.n=t.n;
-		await DB.u.insertOne(u);
+		await insOne(DB.u, u);
 	}
 	//Cache user info wo/ sensitive keys
 	delete u.p;
@@ -1049,11 +1182,6 @@ async function getAuth(req,q) {try {
 
 let LTMLast, MErr, MR;
 
-//Trigger manual maintenance
-/*function ltmTrig() {
-	if(Date.now()-LTMLast >= LTMDown) mLoop(1);
-}*/
-
 //Run periodic maintenance
 async function mLoop(LTM) {
 	if(MR) return; MR=1;
@@ -1070,7 +1198,7 @@ async function mRun(LTM) {
 		}maintenance @ ${utils.formatDate(now,LogDateFmt)}]`)));
 	//Refresh WS, Cat, Usr cache
 	if(LTM) {
-		await Promise.all([loadCats(), loadUsrs(),
+		await Promise.all([loadCats(1), loadUsers(),
 			async () => WS=await DB.u.findOne({_id:0})]);
 		WS._c=WSCk();
 	}
@@ -1103,12 +1231,25 @@ async function mRun(LTM) {
 			await delInvite(k);
 		}
 	}
+	//Unused tables
+	let c;
+	if(LTM) for await(k of DB.listCollections()) {
+		k=k.name;
+		if(k!=='cat' && k!=='usr') {
+			x=k.indexOf('.'), t=k.slice(x+1), c=k.slice(0,x);
+			if(x===-1 || !(c in CatID) || (t!=='p' && t!=='i' && t!=='l' && t!=='h')) {
+				print(C.bgRed("Dropped unused table", k));
+				await DB.collection(k).drop();
+			}
+		}
+	}
 	//Check cats
-	if(LTM) for(let c in CatID) {
+	if(LTM) for(c in CatID) {
 		c=CatID[c];
 		print(`- Checking Cat ${c.n} (#${c._id})`);
 		if(!(c.m>0 && c.m<256)) throw "Bad Magic "+c.m;
 		await Promise.all([chkCat(c), chkItems(c), chkInv(c), chkLocs(c)]);
+		await mkTSIndex(c);
 	}
 	//TODO Auto-purge unused uploaded files
 }
@@ -1152,7 +1293,7 @@ async function chkInv(c) {
 		if(m !== c.m) throw `ID Magic ${m} != Cat Magic ${c.m}`;
 		//Check for part/loc
 		if(!await c.itm.findOne({_id:i.p})) {
-			print(`Deleting Inv #${i._id} w/ missing part`);
+			print(C.bgRed(`Deleted Inv #${i._id} w/ missing part`));
 			p.push(c.inv.deleteOne({_id:i._id}));
 		} else if(!await c.loc.findOne({_id:i.l})) {
 			print(`Inv #${i._id} has missing loc`);

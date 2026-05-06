@@ -65,6 +65,7 @@ h4 { font-size:15pt; font-weight:100; margin-bottom:1rem; }
 p,h1,h2,h3,h4,h5,h6,code,label { overflow-wrap:anywhere; }
 label:not(.pc) { font-size:12pt; font-weight:100; }
 td { padding:0; }
+k { font-weight:900; }
 
 /* Retro Theme */
 body.retro {

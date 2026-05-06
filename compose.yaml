@@ -2,7 +2,7 @@ services:
   app:
     build: .
     container_name: nldb
-    restart: unless-stopped
+    restart: always
     tty: true
     volumes:
       - ./web:/nldb/web
@@ -11,8 +11,17 @@ services:
       - /dev/null:/cert
     ports:
       - 5050:8080
+    depends_on:
+      - mongo
+      - typesense
   mongo:
     image: mongo
-    restart: unless-stopped
+    restart: always
     volumes:
       - ./db:/data/db
+  typesense:
+    image: typesense/typesense:29.0
+    restart: always
+    volumes:
+      - ./typesense:/data
+    command: '--data-dir /data --api-key=xyz --enable-cors'

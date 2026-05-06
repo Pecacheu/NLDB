@@ -44,7 +44,7 @@ onload=() => {try {
 	//HTML Parser
 	let h=HtmlSanitizer;
 	h.AllowedSchemas.splice(0,100,'/?p:','/?i:','/?l:','/?u:','https:','data:');
-	delete h.AllowedAttributes.id, delete h.AllowedTags.DIV;
+	delete h.AllowedAttributes.id, delete h.AllowedTags.DIV, h.AllowedTags.K=1;
 	safeHTML=h.SanitizeHtml;
 	//Header
 	THB.onclick=() => go(`/?${DB._v}t:${DB._i}`,2);
@@ -490,10 +490,10 @@ function draw(par, type, d, nl) {
 		c=utils.mkEl('a',par,'pc'), a=utils.mkDiv(c);
 		if(d.i) utils.mkEl('img',a).src=lnkToUri(d.i);
 		a=utils.mkDiv(a);
-		utils.mkEl('h1',a).textContent=d.n;
-		if(d.m) utils.mkEl('h2',a).textContent=d.m;
-		if(d.d) utils.mkEl('p',c).textContent =
-			d.d.length>100?d.d.slice(0,100)+'...':d.d;
+		utils.mkEl('h1',a,null,null,safeHTML(d.n));
+		if(d.m) utils.mkEl('h2',a,null,null,safeHTML(d.m));
+		if(d.d) utils.mkEl('p',c,null,null,
+			safeHTML(d.d.length>100?d.d.slice(0,100)+'...':d.d));
 		mkLink(c,`?p:${d._id}`);
 	break; case 'i': //Inventory
 		c=utils.mkEl(nl?'label':'a',par,'pc');
@@ -507,10 +507,10 @@ function draw(par, type, d, nl) {
 		} else mkLink(c,`?i:${d._id}`);
 	break; case 'l': //Location
 		c=utils.mkEl(nl?'label':'a',par,'pc');
-		utils.mkEl('h1',c).textContent=d.n;
-		if(!nl && d._fn) utils.mkEl('h4',c,null).textContent=d._fn;
-		if(d.d) utils.mkEl('p',c).textContent =
-			d.d.length>100?d.d.slice(0,100)+'...':d.d;
+		utils.mkEl('h1',c,null,null,safeHTML(d.n));
+		if(!nl && d._fn) utils.mkEl('h4',c,null,null,safeHTML(d._fn));
+		if(d.d) utils.mkEl('p',c,null,null,
+			safeHTML(d.d.length>100?d.d.slice(0,100)+'...':d.d));
 		if(nl) {
 			c.r=a=utils.mkEl('input',c), a.type='radio', a.name='loc';
 			c.htmlFor=a.id=pUID();
@@ -553,13 +553,12 @@ function draw(par, type, d, nl) {
 		if(d.c) utils.mkDiv(c,'hcc').textContent=d.c;
 	break; case 'u': //User
 		c=nl?par:utils.mkEl('a',par,'pc');
-		a=utils.mkEl('h1',c);
-		if(!nl) a.innerHTML=`<i class=bi>&#xF4CF;</i> `;
-		utils.addText(a,d.n), a=utils.mkEl('p',c);
-		if(nl) a=utils.mkEl('a',a);
-		a.textContent=d.e;
-		if(nl) a.href="mailto:"+d.e;
+		utils.mkEl('h1',c,null,null,
+			(nl?'':`<i class=bi>&#xF4CF;</i> `)+safeHTML(d.n));
+		a=utils.mkEl('p',c);
+		if(nl) a=utils.mkEl('a',a), a.href="mailto:"+d.e;
 		else mkLink(c,`?u:${d._id}`);
+		a.innerHTML=safeHTML(d.e);
 		if(d.a && d.a.g & A_WS) utils.mkEl('p',c,'hcc',null,"Admin");
 		if(d.b) utils.mkEl('p',c,'desc',null,safeHTML(d.b));
 	break; default:
@@ -727,6 +726,7 @@ function searchMenu(sel, iRes) {
 	}
 	tl.t=sel;
 	s.onUpd=tl.onUpd=async () => {try {
+		if(ns==null) await getCache();
 		if(ns) return ns=2;
 		ns=1, setTimeout(() => {
 			let n=ns===2; ns=0; if(n) s.onUpd();
@@ -793,9 +793,9 @@ async function editor(type, id, res) {try {
 			hideMenu();
 			if(T==='c') setCat();
 			if(del || typeof r==='string') {
-				clear();
+				let d=Dat; clear();
 				if(del) switch(type) {
-					case 'i': go(`?p:${Dat._id}`); break;
+					case 'i': go(`?p:${d._id}`); break;
 					case 'p': go(`?c:${Cat._id}`); break;
 					case 'l': go(`?ll:${Cat._id}`); break;
 					default: go('/');
@@ -937,7 +937,7 @@ async function editor(type, id, res) {try {
 		await menu('v',"Custom Field",0,id&&id.d);
 		input('t', "Type", I_DROP, null, {o:F_TYPE});
 		input('d', "Data Type", I_DROP, null, {o:I_TYPE});
-		let i=I.v, ni=input('n', "Name", I_TEXT), ti=mkInput(MB, "Text", I_AREA),
+		let i=I.v, ti=input('n', "Text", I_AREA), ni=input('n', "Name", I_TEXT),
 			fv=mkInput(MB, "Fixed Value", I_SWITCH);
 		ti.c.remove();
 		fv.checked=D.v&&!D.v.i;
@@ -1163,16 +1163,13 @@ function cValSet(p,io,d) {
 			if(d.i) d.i=io.d.i||true; //Keep old ID
 			io.replaceWith(i);
 		}
-		i.onclick=e => {
-			e.preventDefault();
-			editor('v',i,(id,d) => cValSet(p,id,d));
-		}
+		i.clk=() => editor('v',i,(id,d) => cValSet(p,id,d));
 		i.classList.add('EClk');
 	}
 }
 
 async function viewUser(id) {try {
-	let d=await dbGet('u',id);
+	let d=id==='g'?{n:'Global User', e:''}:await dbGet('u',id);
 	mkMenu("Viewing User");
 	draw(MB,'u',d,1);
 	showMenu();
@@ -1273,7 +1270,8 @@ async function saveCV(dat, noDb) {
 	setEdit(Dty=0);
 }
 async function _readCV(dat, nd, key) {
-	let cl=dat['_v'+key]; if(!cl) return;
+	let cl=dat['_v'+key];
+	if(!(cl instanceof HTMLElement)) return;
 	if(key) key+='_';
 	await cl.children.eachAsync(async e => {
 		if(!e.d.i) return;
@@ -1354,8 +1352,10 @@ function mkInput(par, name, type, val, opts) {
 						await getCache(), d=IDCache[d];
 						if(d) i.value=i._v=d;
 					}
-				} else if(d) i.value=i._v=d._fn||d.n, i._id=d._id;
-				else i.value=i._v=i._id='';
+				} else if(d) {
+					i.value = utils.mkDiv(null,null,null,d._fn||d.n).textContent;
+					i._id = d._id;
+				} else i.value=i._v=i._id='';
 				rstBtnMode(d, opts.r&&i._id!==opts.r);
 				if(upd) upd();
 			})(val);
@@ -1730,6 +1730,7 @@ const DRAG_HOLD=250, HOLD_DROP=10;
 class Grabable {
 	constructor(e) {
 		e._g=this, this.e=e;
+		this._m=this._move.bind(this), this._u=this._up.bind(this);
 		this.ob=new MutationObserver(() => {
 			if(!document.body.contains(e)) this.update(0);
 		});
@@ -1746,7 +1747,6 @@ class Grabable {
 			}
 		});
 		if(en) {
-			if(!this._m) this._m=this._move.bind(this), this._u=this._up.bind(this);
 			addEventListener('pointermove', this._m);
 			addEventListener('pointerup', this._u);
 			this.ob.observe(document.body, {childList:true, subtree:true});
@@ -1757,15 +1757,14 @@ class Grabable {
 		}
 	}
 	_down(c,e) {
-		if(this.t||this.c) return;
-		this.x=e.clientX, this.y=e.clientY;
-		this.t=setTimeout(() => this._drag(c,e),DRAG_HOLD);
-	}
-	_drag(c,e) {
 		if(this.c) return;
-		let ib=c.innerRect, b=c.boundingRect, s=c.style;
+		this.c=c, this.x=e.clientX, this.y=e.clientY;
+		this.t=setTimeout(() => this._drag(e),DRAG_HOLD);
+	}
+	_drag(e) {
+		let c=this.c, ib=c.innerRect, b=c.boundingRect, s=c.style;
 		s.width=b.w+'px', s.height=b.h+'px', s.transition='none';
-		this.x=e.clientX-b.x, this.y=e.clientY-b.y, this.c=c, this.t=0;
+		this.x=e.clientX-b.x, this.y=e.clientY-b.y, this.t=0;
 		c._g=utils.mkDiv(this.e, 'dragBox', {width:b.w+'px', height:b.h+'px'});
 		c._g.w=ib.w/3, c._g.h=ib.h/3;
 		DB.appendChild(c), c.classList.add('drag');
@@ -1775,8 +1774,8 @@ class Grabable {
 	}
 	_move(e) {
 		let c=this.c, x,y;
-		if(c||this.t) x=e.clientX-this.x, y=e.clientY-this.y;
-		if(c) {
+		if(c) x=e.clientX-this.x, y=e.clientY-this.y;
+		if(this.o) {
 			let s=c.style, a,dx,dy,rx,ry;
 			s.left=x+'px', s.top=y+'px';
 			getSelection().removeAllRanges();
@@ -1792,12 +1791,19 @@ class Grabable {
 		}
 	}
 	_up() {
-		if(this.t) clearTimeout(this.t), this.t=0;
-		if(!this.c) return;
-		let c=this.c, s=c.style;
-		c._g.replaceWith(c), c.classList.remove('drag');
-		s.left=s.top=s.width=s.height=s.transition='';
-		delete c._g, delete this.c, delete this.o;
+		let c=this.c;
+		if(this.t) {
+			clearTimeout(this.t), this.t=0;
+			if(c.clk) c.clk();
+		}
+		if(!c) return;
+		if(c._g) {
+			let s=c.style;
+			c._g.replaceWith(c), c.classList.remove('drag');
+			s.left=s.top=s.width=s.height=s.transition='';
+			delete c._g;
+		}
+		delete this.c, delete this.o;
 	}
 }
 

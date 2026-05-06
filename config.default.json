@@ -1,6 +1,7 @@
 {
 	"debug": 0,
 	"dbUri": "mongodb://mongo:27017?tls=false",
+	"tsHost": "http://typesense:8108",
 	"host": "example.com",
 	"mail": "info@example.com",
 	"mailPass": "pass",
