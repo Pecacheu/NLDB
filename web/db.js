@@ -72,7 +72,7 @@ onload=() => {try {
 	MENU.addEventListener('hidden.bs.modal', () => {
 		let a=MENU.a; MENU.a=0;
 		if(a===1) return MENU.bs.show();
-		_rstMenu(), MB.textContent='', MENU.w=0;
+		_rstMenu(), MB.replaceChildren(), MENU.w=0;
 		if(Dty===1) Dty=0;
 	});
 	MENU.addEventListener('shown.bs.modal', () => {
@@ -121,7 +121,7 @@ function setTheme(lm, upd, c1, c2) {
 async function login(e) {
 	e.preventDefault();
 	//TODO Enforce password rules for decent security?
-	ERR.textContent='';
+	ERR.replaceChildren();
 	let d={u:USR.value, p:PWD.value}, v=IC.value;
 	if(v) d.v=v;
 	if(this===BS) d.s=1; //This is BS!
@@ -306,7 +306,7 @@ async function plView(skip=0, tbl) {
 	let pl=PageLen, d=dbGet('pl', DB._i, skip, pl, ...(tbl?[1]:[])),c,n;
 	if(skip) {
 		d=await d, Dat.push(...d.d), n=d.n;
-		c=CONT.firstChild, c.textContent='';
+		c=CONT.firstChild, c.replaceChildren();
 	} else {
 		clear();
 		d=[d, setCat(DB._i)];
@@ -345,7 +345,7 @@ async function hlView(skip=0) {
 	if(skip) {
 		d=(await Promise.all([d, getCache()]))[0];
 		Dat.push(...d.d), n=d.n;
-		c=CONT.firstChild, c.textContent='';
+		c=CONT.firstChild, c.replaceChildren();
 	} else {
 		clear();
 		d=await d, await setCat(t?d.c:i, 1);
@@ -576,7 +576,7 @@ async function lvSel(r) {
 	let c=CONT.querySelector('.lv');
 	if(!r) return c&&c.remove(),onresize();
 	let d=await dbGet('l', r._d._id);
-	if(c) c.textContent=''; else {
+	if(c) c.replaceChildren(); else {
 		c=utils.mkDiv(CONT,'lv');
 		c.onscroll=onscroll;
 	}
@@ -686,7 +686,7 @@ function mkMenu(name, btns, width, nc) {
 	M_F.hidden=!btns, M_DEL.hidden=btns<2, M_CPY.hidden=btns<3;
 	MENU.style.setProperty('--bs-modal-width', (MENU.w=(width||500))+'px');
 	MENU.bs._config.backdrop=btns?'static':true;
-	if(!nc) MB.textContent='';
+	if(!nc) MB.replaceChildren();
 	onresize();
 }
 function _rstMenu() {
@@ -738,7 +738,7 @@ function searchMenu(sel, iRes) {
 		ac=null; res(Cat._sr=q, t);
 	} catch(e) {err(e)}}
 	function res(rd,t) {
-		rl.textContent=''; let r;
+		rl.replaceChildren(); let r;
 		if(Array.isArray(rd)) for(r of rd) doDraw(rl,t,r);
 		else for(t in rd) {
 			utils.mkEl('h3',rl,'hr').textContent=S_TABS[t];
@@ -853,7 +853,7 @@ async function editor(type, id, res) {try {
 	function _customMenu(t, ot, iKey) {
 		//Tab switch
 		let m=MB.children[1];
-		if(m) MCmd.hide(1),m.textContent='';
+		if(m) MCmd.hide(1),m.replaceChildren();
 		else m=utils.mkDiv(MB);
 		//Draw menu
 		let dat=I[ot][iKey] || (I[ot][iKey]={value:D[ot]&&D[ot][iKey]}),
@@ -1042,7 +1042,7 @@ async function editor(type, id, res) {try {
 			}});
 			(I.w.q.onUpd=() => {
 				let v=I.w.q.checked; I.q.v.c.hidden=!v;
-				if(!v) I.q.v.textContent='',ic={};
+				if(!v) I.q.v.replaceChildren(),ic={};
 			})();
 			T='w';
 			input('c1', "Default Primary Color", I_COLOR);
@@ -1163,7 +1163,7 @@ function cValSet(p,io,d) {
 			if(d.i) d.i=io.d.i||true; //Keep old ID
 			io.replaceWith(i);
 		}
-		i.clk=() => editor('v',i,(id,d) => cValSet(p,id,d));
+		i.onPress=() => editor('v',i,(id,d) => cValSet(p,id,d));
 		i.classList.add('EClk');
 	}
 }
@@ -1479,7 +1479,7 @@ function mkInput(par, name, type, val, opts) {
 		function set(u,n) {
 			rstBtnMode(i.fn, i.r&&i.fn!==i.r);
 			if(i.type==='text') i.value='';
-			c.textContent='';
+			c.replaceChildren();
 			if(n||!u) { //Clear
 				utils.mkEl('span',c).textContent=u||"No file chosen";
 				if(!opts.nl) {
@@ -1598,7 +1598,7 @@ function clear() {
 	},200);
 	let ls=LOAD.style;
 	ls.display=null, ls.opacity=1;
-	CONT.textContent='', Loader=Dat=0;
+	CONT.replaceChildren(), Loader=Dat=0;
 }
 function setTitle(t) {document.title="NLDB"+(t?' - '+t:'')}
 function mkLink(l,u) {u&&(l.href=u),l.onclick=_lClk}
@@ -1714,7 +1714,7 @@ function _tSort() {
 	if(i===t.s) t.n=!t.n; else t.s=i;
 	let n=t.n?1:-1;
 	t.d.sort((a,b) => (a===h||b===h)?0:(a=_sSort(a[i]), b=_sSort(b[i]), a<b?-n:a>b?n:0));
-	b.textContent='', t.d.forEach(r => b.appendChild(r.e));
+	b.replaceChildren(...t.d.map(r => r.e));
 	b.firstChild.children.each(td => {
 		td.textContent=(td.d||'')+(td.index!==t.s?'':t.n?' ↑':' ↓');
 	});
@@ -1767,7 +1767,7 @@ class Grabable {
 		this.x=e.clientX-b.x, this.y=e.clientY-b.y, this.t=0;
 		c._g=utils.mkDiv(this.e, 'dragBox', {width:b.w+'px', height:b.h+'px'});
 		c._g.w=ib.w/3, c._g.h=ib.h/3;
-		DB.appendChild(c), c.classList.add('drag');
+		DB.appendChild(c), c.classList.add('dragging');
 		this.o=[...this.e.children];
 		this.o.forEach(o => o._gr=o.boundingRect);
 		this._move(e);
@@ -1794,12 +1794,12 @@ class Grabable {
 		let c=this.c;
 		if(this.t) {
 			clearTimeout(this.t), this.t=0;
-			if(c.clk) c.clk();
+			if(c && c.onPress) c.onPress();
 		}
 		if(!c) return;
 		if(c._g) {
 			let s=c.style;
-			c._g.replaceWith(c), c.classList.remove('drag');
+			c._g.replaceWith(c), c.classList.remove('dragging');
 			s.left=s.top=s.width=s.height=s.transition='';
 			delete c._g;
 		}

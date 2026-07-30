@@ -4,7 +4,7 @@ NLDB is a highly flexible, multi-user inventory management system built on a mod
 Best of all, it's desktop and mobile-friendly, lightweight, and stores data efficiently via MongoDB documents and indexes, making it scalable and backup-friendly.
 
 # Features
-NLDB works with both the **Unique Inventory** data model *(best for tracking unique, high-value assets, like PCs)* and the **Parts & Stock** data model *(best for tracking inventory, POs, and BOMs)*, and with support for multiple independent databases plus a granular user permissions system, it can unify all your tracking needs into one easy-to-use, high performance, and crucially, easily backed up open-source solution!
+NLDB works with and can both the **Unique Asset** data model *(best for tracking unique, high-value assets, like PCs; think [Snipe-IT](https://snipeitapp.com) or [AssetSonar](https://ezo.io/assetsonar))* and the **Parts & Stock** data model *(best for tracking inventory, POs, and BOMs; think [BOMIST](https://bomist.com) or [Altium Agile](https://www.altium.com/agile/teams))*. Pair that with support for multiple independent databases plus a granular user permissions system, and you can finally unify all your tracking needs into one easy-to-use, high performance- and crucially- easily backed up open-source platform!
 
 ### 🧘 Relaxed view
 ![](doc/Default.png)
@@ -39,6 +39,8 @@ NLDB works with both the **Unique Inventory** data model *(best for tracking uni
 <img src=doc/QR.png width=60%>
 
 ### 🧪 Extendable API
+NLDB's REST API is powerful and extendable, enabling advanced integrations and even interactive extensions like custom check-in forms served directly within the web-client- all without your users needing to install any external program.
+
 More details on API usage & examples to come soon.
 
 # Installation
@@ -52,6 +54,10 @@ You can also configure NLDB manually outside of a container. You'll need a recen
 
 # First Time Setup
 Once NLDB is running, visit it in a browser. For now, there's no fancy setup wizard. Simply create an account, then open the menu and choose Settings. By default, anyone can make an account freely, though only the first account defaults to full admin access. You probably don't want this, so you'll want to either enable Invite Codes (for now, these are one-time-use), or change the Email Domain setting, which limits the emails with which users may create accounts to your organization's domain.
+
+## Disclaimer
+
+🚫 No AI-generated i.e. "vibe-coded" code or assets are present in this project. We intend to keep it that way; while using AI as a research assistant is fine, please do not submit low-effort AI-generated PRs.
 
 <!--
 ## Key Controls

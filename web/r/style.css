@@ -362,13 +362,13 @@ label.pc { cursor:pointer; }
 .pv td h2 { margin:0; }
 tr.sel td { background:var(--hdr-bg-dark); }
 
-.EClk:not(.drag):hover { background:var(--hdr-bg-dark2); }
-.dragBox {
+.EClk:not(.grabbing):hover { background:var(--hdr-bg-dark2); }
+.grabBox {
 	border:2px dashed var(--bs-border-color);
 	border-radius:10px;
 }
-.dragItm,.dragItm * { touch-action:none; }
-.drag { position:fixed; opacity:.8; z-index:99999; }
+.grabItm,.grabItm * { touch-action:none; }
+.grabbing { opacity:.8; z-index:99999; }
 
 .hr {
 	border-bottom:1px solid var(--bs-border-color);
@@ -384,7 +384,7 @@ h3.hr { margin-bottom:12px; }
 	#CONT:has(.iv) { flex-direction:row; }
 	.iv {
 		min-width:400px; margin-left:10px; padding-left:10px;
-		border-left:1px solid var(--bs-border-color);
+		width:35%; border-left:1px solid var(--bs-border-color);
 	}
 	.iv h2 { font-size:30pt; }
 }

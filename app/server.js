@@ -1,5 +1,5 @@
 //NLDB, Pecacheu 2025. GNU GPL v3
-const VER='2.0.0';
+const VER='2.0.1';
 
 import fs from 'fs/promises';
 import read from 'readline';
@@ -910,10 +910,10 @@ async function dbCmd(q,req,res) {
 			await Promise.all(p);
 		}
 		if(q[0]==='lu' && 'p' in j) {
-			dbLog(c, LOG_LM, id, q.t, t, n, {o:q.ol, h:j.p});
+			dbLog(c, LOG_LM, id, q[0][0], t, n, {o:q.ol, h:j.p});
 		} else if(q[0]==='iu') {
-			if('l' in j) dbLog(c, LOG_IM, id, q.t, t, n, {p:q.p, o:q.ol, h:j.l});
-			if('q' in j) dbLog(c, LOG_IA, id, q.t, t, n, {p:q.p, o:q.oq, h:j.q});
+			if('l' in j) dbLog(c, LOG_IM, id, q[0][0], t, n, {p:q.p, o:q.ol, h:j.l});
+			if('q' in j) dbLog(c, LOG_IA, id, q[0][0], t, n, {p:q.p, o:q.oq, h:j.q});
 		}
 		return 1;
 	case 'uu': //User Update [id, data]

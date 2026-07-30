@@ -5,3 +5,4 @@ app/uuid
 web/u
 db
 typesense
+compose.override.yaml
